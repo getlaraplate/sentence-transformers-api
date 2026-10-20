@@ -180,3 +180,7 @@ sudo cp sentence-transformers.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now sentence-transformers.service
 ```
+
+## Licenza
+
+Rilasciato sotto [Apache License 2.0](LICENSE).
