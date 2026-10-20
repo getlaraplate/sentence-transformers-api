@@ -6,85 +6,14 @@ asks of a model and what it answers, not about a real checkpoint, and they run w
     python -m unittest discover -s tests
 """
 
-import importlib.util
-import os
-import sys
-import types
 import unittest
-from pathlib import Path
-from unittest import mock
 
 import numpy
 
-SERVICE = Path(__file__).resolve().parent.parent / "sentence-api.py"
+from service_case import FakeCrossEncoder, FakeSigmoid, ServiceTestCase, pair
 
 
-class FakeSentenceTransformer:
-    def __init__(self, name):
-        self.name = name
-
-    def encode(self, texts, normalize_embeddings=True):
-        return numpy.zeros((len(texts), 3))
-
-
-class FakeSigmoid:
-    """Stands for torch.nn.Sigmoid: the test only needs to tell it from "no activation"."""
-
-
-class FakeCrossEncoder:
-    instances = []
-    # When set, predict() returns this instead of one score per pair.
-    scores = None
-
-    def __init__(self, name, max_length=None, **kwargs):
-        self.name = name
-        self.max_length = max_length
-        self.calls = []
-        type(self).instances.append(self)
-
-    def predict(self, pairs, activation_fn=None, convert_to_numpy=True, **kwargs):
-        self.calls.append({"pairs": pairs, "activation_fn": activation_fn})
-        if type(self).scores is not None:
-            return type(self).scores
-        return numpy.array([min(len(text) / 100, 1.0) for _, text in pairs])
-
-
-def pair(query="how many people live in Berlin", text="Berlin has about 3.5 million inhabitants"):
-    return {"query": query, "text": text}
-
-
-class ScoreEndpointTest(unittest.TestCase):
-    def setUp(self):
-        FakeCrossEncoder.instances = []
-        FakeCrossEncoder.scores = None
-
-        sentence_transformers = types.ModuleType("sentence_transformers")
-        sentence_transformers.SentenceTransformer = FakeSentenceTransformer
-        sentence_transformers.CrossEncoder = FakeCrossEncoder
-        torch = types.ModuleType("torch")
-        torch.nn = types.SimpleNamespace(Sigmoid=FakeSigmoid)
-
-        # Kept for the whole test: /score imports torch when it is called, not when the module loads.
-        patcher = mock.patch.dict(sys.modules, {"sentence_transformers": sentence_transformers, "torch": torch})
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def service(self, **env):
-        """A fresh copy of the service, so caches and defaults start from the given environment only."""
-        environ = {
-            key: value
-            for key, value in os.environ.items()
-            if not key.startswith(("CROSS_ENCODER_", "EMBEDDING_"))
-        }
-        environ.update(env)
-
-        spec = importlib.util.spec_from_file_location("sentence_api_under_test", SERVICE)
-        module = importlib.util.module_from_spec(spec)
-        with mock.patch.dict(os.environ, environ, clear=True):
-            spec.loader.exec_module(module)
-
-        return module.app.test_client()
-
+class ScoreEndpointTest(ServiceTestCase):
     def test_scores_each_pair_in_order_and_names_the_model(self):
         client = self.service(CROSS_ENCODER_MODEL="org/reranker")
 
@@ -129,7 +58,11 @@ class ScoreEndpointTest(unittest.TestCase):
         self.assertEqual(FakeCrossEncoder.instances[0].max_length, 512)
 
     def test_a_request_can_name_another_model_and_the_cache_keeps_only_the_newest(self):
-        client = self.service(CROSS_ENCODER_MODEL="org/first", CROSS_ENCODER_MODEL_CACHE="1")
+        client = self.service(
+            CROSS_ENCODER_MODEL="org/first",
+            CROSS_ENCODER_MODEL_CACHE="1",
+            CROSS_ENCODER_ALLOWED_MODELS="org/second",
+        )
 
         response = client.post("/score", json={"pairs": [pair()], "model": "org/second"})
 
@@ -145,8 +78,8 @@ class ScoreEndpointTest(unittest.TestCase):
         self.assertIn("CROSS_ENCODER_MODEL", response.get_json()["error"])
         self.assertEqual(FakeCrossEncoder.instances, [])
 
-    def test_a_host_with_the_default_off_still_scores_when_the_request_names_a_model(self):
-        client = self.service(CROSS_ENCODER_MODEL="")
+    def test_a_host_with_the_default_off_still_scores_when_the_request_names_an_allowed_model(self):
+        client = self.service(CROSS_ENCODER_MODEL="", CROSS_ENCODER_ALLOWED_MODELS="org/reranker")
 
         response = client.post("/score", json={"pairs": [pair()], "model": "org/reranker"})
 

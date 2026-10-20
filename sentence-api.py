@@ -1,17 +1,42 @@
+import hmac
 import math
 import os
+import threading
 
 from flask import Flask, jsonify, request
 from sentence_transformers import CrossEncoder, SentenceTransformer
+from werkzeug.exceptions import HTTPException
 
 app = Flask(__name__)
+
+
+def env_list(name):
+    """Comma-separated values of an environment variable, blanks dropped."""
+    return [value.strip() for value in os.environ.get(name, "").split(",") if value.strip()]
+
+
+# Bearer keys accepted on /embed, /score and /models. Several keys may be given,
+# comma-separated, to rotate a key or to accept a distinct CROSS_ENCODER_API_KEY
+# from the Laraplate client. No key means the service is open (trusted network or
+# local development only). /health always stays open for monitoring.
+API_KEYS = env_list("SENTENCE_TRANSFORMERS_API_KEY")
+PUBLIC_PATHS = {"/health"}
 
 # Default model, and how many models to keep resident. The Laraplate client
 # sends the active profile's service_model in each request, so this default is
 # only used when a request omits "model".
 DEFAULT_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
 MODEL_CACHE = max(1, int(os.environ.get("EMBEDDING_MODEL_CACHE", "2")))
+HOST = os.environ.get("EMBEDDING_HOST", "0.0.0.0")
 PORT = int(os.environ.get("EMBEDDING_PORT", "8000"))
+
+# Request limits. The body limit applies to every endpoint; the text limits apply
+# to /embed texts and to the query and text of each /score pair. The models
+# truncate to a few hundred tokens anyway, so longer texts only cost memory.
+MAX_REQUEST_MB = max(1, int(os.environ.get("EMBEDDING_MAX_REQUEST_MB", "16")))
+MAX_TEXTS = max(1, int(os.environ.get("EMBEDDING_MAX_TEXTS", "256")))
+MAX_TEXT_CHARS = max(1, int(os.environ.get("EMBEDDING_MAX_TEXT_CHARS", "100000")))
+app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_MB * 1024 * 1024
 
 # Cross-encoder reranking (POST /score). As with /embed, the client may name the
 # model in the request and this is the default. A cross-encoder is another kind
@@ -27,6 +52,26 @@ RERANK_MODEL_CACHE = max(1, int(os.environ.get("CROSS_ENCODER_MODEL_CACHE", "1")
 RERANK_MAX_LENGTH = max(1, int(os.environ.get("CROSS_ENCODER_MAX_LENGTH", "512")))
 # The Laraplate client sends at most 64 pairs per request.
 RERANK_MAX_PAIRS = max(1, int(os.environ.get("CROSS_ENCODER_MAX_PAIRS", "64")))
+
+
+def allowed_models(name, default):
+    """Models a request may name: the default plus the listed ones, or None for any.
+
+    Loading a model downloads it from Hugging Face, so a client must not be able
+    to name an arbitrary one. "*" in the list turns the check off (development).
+    """
+    listed = env_list(name)
+    if "*" in listed:
+        return None
+    return sorted(set(listed) | ({default} if default else set()))
+
+
+EMBEDDING_ALLOWED_MODELS = allowed_models("EMBEDDING_ALLOWED_MODELS", DEFAULT_MODEL)
+RERANK_ALLOWED_MODELS = allowed_models("CROSS_ENCODER_ALLOWED_MODELS", RERANK_MODEL)
+
+
+def model_allowed(name, allowed):
+    return allowed is None or name in allowed
 
 # Per-family input prefixes. Some embedding models are trained to distinguish a
 # search query from an indexed passage and require a textual prefix to embed
@@ -49,16 +94,19 @@ MODEL_PREFIXES = {
 
 # name -> SentenceTransformer, ordered oldest..newest (simple LRU by re-insert).
 _models = {}
+# Guards both model caches: gunicorn serves requests from several threads.
+_models_lock = threading.Lock()
 
 
 def load_model(name):
     name = name or DEFAULT_MODEL
-    model = _models.pop(name, None)
-    if model is None:
-        model = SentenceTransformer(name)
-    _models[name] = model  # mark as most-recently used
-    while len(_models) > MODEL_CACHE:
-        _models.pop(next(iter(_models)))
+    with _models_lock:
+        model = _models.pop(name, None)
+        if model is None:
+            model = SentenceTransformer(name)
+        _models[name] = model  # mark as most-recently used
+        while len(_models) > MODEL_CACHE:
+            _models.pop(next(iter(_models)))
     return name, model
 
 
@@ -116,12 +164,13 @@ def load_reranker(name):
     name = name or RERANK_MODEL
     if not name:
         return None, None
-    model = _rerankers.pop(name, None)
-    if model is None:
-        model = CrossEncoder(name, max_length=RERANK_MAX_LENGTH)
-    _rerankers[name] = model  # mark as most-recently used
-    while len(_rerankers) > RERANK_MODEL_CACHE:
-        _rerankers.pop(next(iter(_rerankers)))
+    with _models_lock:
+        model = _rerankers.pop(name, None)
+        if model is None:
+            model = CrossEncoder(name, max_length=RERANK_MAX_LENGTH)
+        _rerankers[name] = model  # mark as most-recently used
+        while len(_rerankers) > RERANK_MODEL_CACHE:
+            _rerankers.pop(next(iter(_rerankers)))
     return name, model
 
 
@@ -148,7 +197,43 @@ def validate_pairs(pairs):
             or not isinstance(pair.get("text"), str)
         ):
             return f'pairs[{index}] must be {{"query": str, "text": str}}'
+        if len(pair["query"]) > MAX_TEXT_CHARS or len(pair["text"]) > MAX_TEXT_CHARS:
+            return f"pairs[{index}] is too long (max {MAX_TEXT_CHARS} characters per query or text)"
     return None
+
+
+def validate_texts(texts):
+    """Return an error message for a malformed or oversized list of texts, or None."""
+    if not isinstance(texts, list):
+        return "texts must be a list of strings"
+    if len(texts) > MAX_TEXTS:
+        return f"too many texts: {len(texts)} (max {MAX_TEXTS})"
+    for index, text in enumerate(texts):
+        if not isinstance(text, str):
+            return f"texts[{index}] must be a string"
+        if len(text) > MAX_TEXT_CHARS:
+            return f"texts[{index}] is too long: {len(text)} characters (max {MAX_TEXT_CHARS})"
+    return None
+
+
+def validate_requested_model(requested, allowed):
+    """Return an error message for a `model` the request may not name, or None."""
+    if requested is None:
+        return None
+    if not isinstance(requested, str) or requested == "":
+        return "model must be a non-empty string"
+    if not model_allowed(requested, allowed):
+        return f'model "{requested}" is not allowed on this host'
+    return None
+
+
+def authorized(header):
+    """True when the Authorization header carries one of the configured Bearer keys."""
+    scheme, _, token = header.partition(" ")
+    token = token.strip()
+    if scheme.lower() != "bearer" or not token:
+        return False
+    return any(hmac.compare_digest(token.encode(), key.encode()) for key in API_KEYS)
 
 
 def score_pairs(model, pairs):
@@ -183,6 +268,20 @@ if RERANK_MODEL:
     load_reranker(RERANK_MODEL)
 
 
+@app.before_request
+def require_api_key():
+    if not API_KEYS or request.path in PUBLIC_PATHS:
+        return None
+    if authorized(request.headers.get("Authorization", "")):
+        return None
+    return jsonify({"error": "unauthorized"}), 401, {"WWW-Authenticate": "Bearer"}
+
+
+@app.errorhandler(413)
+def request_too_large(error):
+    return jsonify({"error": f"request body too large (max {MAX_REQUEST_MB} MB)"}), 413
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({
@@ -199,17 +298,20 @@ def health():
 def models():
     """Discovery endpoint: what the client can ask for and how input_type maps.
 
-    The service loads any model name on demand, so this does not enumerate a
-    fixed allow-list; it exposes the default, what is currently resident, and
-    the input_type prefix families so the client knows when input_type matters.
+    It exposes the default, the models a request may name (null when any is
+    allowed), what is currently resident, and the input_type prefix families so
+    the client knows when input_type matters.
     """
     return jsonify({
         "default_model": DEFAULT_MODEL,
+        "allowed_models": EMBEDDING_ALLOWED_MODELS,
         "loaded_models": list(_models.keys()),
         "model_cache": MODEL_CACHE,
+        "max_texts": MAX_TEXTS,
+        "max_text_chars": MAX_TEXT_CHARS,
         "input_types": ["query", "passage"],
         "prefix_families": MODEL_PREFIXES,
-        "reranker": reranker_info(),
+        "reranker": {**reranker_info(), "allowed_models": RERANK_ALLOWED_MODELS},
     })
 
 
@@ -217,6 +319,8 @@ def models():
 def embed():
     try:
         data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({"error": "the body must be a JSON object"}), 400
 
         if "texts" in data:
             texts = data["texts"]
@@ -225,13 +329,22 @@ def embed():
         else:
             return jsonify({"error": "No text or texts provided"}), 400
 
+        error = validate_texts(texts)
+        if error:
+            return jsonify({"error": error}), 400
+
         input_type = data.get("input_type")
         if input_type is not None and input_type not in ("query", "passage"):
             return jsonify({
                 "error": "input_type must be 'query' or 'passage'",
             }), 400
 
-        name, model = load_model(data.get("model"))
+        requested = data.get("model") or None
+        error = validate_requested_model(requested, EMBEDDING_ALLOWED_MODELS)
+        if error:
+            return jsonify({"error": error}), 400
+
+        name, model = load_model(requested)
         texts, prefix_applied = apply_prefix(texts, name, input_type)
         normalize = bool(data.get("normalize_embeddings", True))
         embeddings = model.encode(texts, normalize_embeddings=normalize)
@@ -242,6 +355,8 @@ def embed():
             "prefix_applied": prefix_applied,
             "embeddings": [embedding.tolist() for embedding in embeddings],
         })
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
 
@@ -251,6 +366,8 @@ def score():
     """Relevance score in [0, 1] for each {query, text} pair, from a cross-encoder."""
     try:
         data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({"error": "the body must be a JSON object"}), 400
         pairs = data.get("pairs")
 
         error = validate_pairs(pairs)
@@ -258,8 +375,9 @@ def score():
             return jsonify({"error": error}), 400
 
         requested = data.get("model")
-        if requested is not None and (not isinstance(requested, str) or requested == ""):
-            return jsonify({"error": "model must be a non-empty string"}), 400
+        error = validate_requested_model(requested, RERANK_ALLOWED_MODELS)
+        if error:
+            return jsonify({"error": error}), 400
 
         name, model = load_reranker(requested)
         if model is None:
@@ -271,9 +389,12 @@ def score():
             "model": name,
             "scores": score_pairs(model, pairs) if pairs else [],
         })
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+    # Development server only; production runs under gunicorn (gunicorn.conf.py).
+    app.run(host=HOST, port=PORT)

@@ -5,13 +5,27 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=root
+# Dedicated unprivileged user, see "Deploy (systemd)" in the README.
+User=sentence-api
+Group=sentence-api
 WorkingDirectory=/opt/sentence-api
 Environment=PATH=/opt/ai-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=EMBEDDING_MODEL_CACHE=2
-ExecStart=/opt/ai-env/bin/python /opt/sentence-api/sentence-api.py
+# Hugging Face model cache, in /var/cache/sentence-api (created by systemd, owned by the user).
+CacheDirectory=sentence-api
+Environment=HF_HOME=/var/cache/sentence-api
+# Secrets (SENTENCE_TRANSFORMERS_API_KEY) and local overrides live in
+# /opt/sentence-api/.env (git-ignored); the leading dash makes the file optional.
+EnvironmentFile=-/opt/sentence-api/.env
+ExecStart=/opt/ai-env/bin/gunicorn -c /opt/sentence-api/gunicorn.conf.py sentence-api:app
 Restart=always
 RestartSec=10
+NoNewPrivileges=yes
+# Extra sandboxing; needs mount namespaces, which an unprivileged LXC container
+# may not allow (the unit then fails with status 226/NAMESPACE).
+#PrivateTmp=yes
+#ProtectSystem=strict
+#ProtectHome=yes
 StandardOutput=journal
 StandardError=journal
 
