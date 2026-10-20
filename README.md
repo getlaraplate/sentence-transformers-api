@@ -1,14 +1,14 @@
 # sentence-api
 
-Piccolo servizio HTTP (Flask) che espone embeddings tramite
-[sentence-transformers](https://www.sbert.net/). Usato dallo stack Laraplate:
-il client invia in ogni richiesta il `service_model` del profilo attivo, quindi
-il modello di default serve solo quando la richiesta non specifica `model`.
+Small HTTP service (Flask) that serves embeddings through
+[sentence-transformers](https://www.sbert.net/). Used by the Laraplate stack:
+the client sends the active profile's `service_model` in every request, so the
+default model is only used when a request does not specify `model`.
 
-## Requisiti
+## Requirements
 
-- Python 3.11+ (`requirements.txt` fissa `numpy==2.3.2`, che richiede 3.11)
-- Le dipendenze in [`requirements.txt`](requirements.txt)
+- Python 3.11+ (`requirements.txt` pins `numpy==2.3.2`, which requires 3.11)
+- The dependencies in [`requirements.txt`](requirements.txt)
 
 ```bash
 python -m venv .venv
@@ -16,37 +16,37 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Configurazione (variabili d'ambiente)
+## Configuration (environment variables)
 
-| Variabile                | Default                              | Descrizione                                   |
+| Variable                 | Default                              | Description                                   |
 | ------------------------ | ------------------------------------ | --------------------------------------------- |
-| `EMBEDDING_MODEL`        | `intfloat/multilingual-e5-small`     | Modello caricato all'avvio / usato di default |
-| `EMBEDDING_MODEL_CACHE`  | `2`                                  | Quanti modelli tenere residenti (LRU)         |
-| `EMBEDDING_PORT`         | `8000`                               | Porta di ascolto                              |
-| `CROSS_ENCODER_MODEL`    | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Modello di rerank di default per `/score`, caricato all'avvio. Stringa vuota: rerank spento, `/score` risponde 503 se la richiesta non indica `model` |
-| `CROSS_ENCODER_MODEL_CACHE` | `1`                               | Quanti modelli di rerank tenere residenti (LRU) |
-| `CROSS_ENCODER_MAX_LENGTH`  | `512`                             | Token massimi per coppia (il resto viene troncato) |
-| `CROSS_ENCODER_MAX_PAIRS`   | `64`                              | Coppie massime per richiesta (il client Laraplate ne invia al massimo 64) |
+| `EMBEDDING_MODEL`        | `intfloat/multilingual-e5-small`     | Model loaded at startup and used by default   |
+| `EMBEDDING_MODEL_CACHE`  | `2`                                  | How many models to keep resident (LRU)        |
+| `EMBEDDING_PORT`         | `8000`                               | Listening port                                |
+| `CROSS_ENCODER_MODEL`    | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Default rerank model for `/score`, loaded at startup. Empty string: reranking off, `/score` answers 503 unless the request names a `model` |
+| `CROSS_ENCODER_MODEL_CACHE` | `1`                               | How many rerank models to keep resident (LRU) |
+| `CROSS_ENCODER_MAX_LENGTH`  | `512`                             | Maximum tokens per pair (the rest is truncated) |
+| `CROSS_ENCODER_MAX_PAIRS`   | `64`                              | Maximum pairs per request (the Laraplate client sends at most 64) |
 
-I modelli vengono scaricati automaticamente da Hugging Face al primo utilizzo e
-non sono versionati nel repo.
+Models are downloaded automatically from Hugging Face on first use and are not
+versioned in the repository.
 
-## Avvio
+## Running
 
 ```bash
 python sentence-api.py
 ```
 
-Il servizio ascolta su `0.0.0.0` sulla porta `EMBEDDING_PORT` (default `8000`).
+The service listens on `0.0.0.0`, on port `EMBEDDING_PORT` (default `8000`).
 
-Il modello di default viene caricato all'avvio: se non è scaricabile o
-utilizzabile il processo termina subito, invece di partire e rispondere 500.
+The default model is loaded at startup: if it cannot be downloaded or used, the
+process exits immediately instead of starting and answering 500.
 
 ## API
 
 ### `GET /health`
 
-Stato del servizio e modelli caricati.
+Service status and loaded models.
 
 ```json
 {
@@ -65,14 +65,14 @@ Stato del servizio e modelli caricati.
 }
 ```
 
-`reranker.default_model` a `null` indica un host che non fa rerank.
+`reranker.default_model` set to `null` means the host does not rerank.
 
 ### `GET /models`
 
-Endpoint di discovery: il servizio carica qualsiasi modello su richiesta, quindi
-non c'è un elenco fisso di modelli ammessi. Restituisce il default, i modelli
-attualmente residenti e le famiglie che supportano `input_type`, così il client
-sa quando `input_type` conta.
+Discovery endpoint: the service loads any model on request, so there is no
+fixed list of allowed models. It returns the default, the models currently
+resident and the families that support `input_type`, so the client knows when
+`input_type` matters.
 
 ```json
 {
@@ -89,20 +89,20 @@ sa quando `input_type` conta.
 
 ### `POST /embed`
 
-Genera gli embeddings. Body JSON:
+Generates embeddings. JSON body:
 
-- `text` (string) **oppure** `texts` (array di string) — obbligatorio
-- `model` (string, opzionale) — override del modello di default
-- `input_type` (`"query"` | `"passage"`, opzionale) — intento **semantico**:
-  `query` = sto cercando, `passage` = sto indicizzando. Il server garantisce il
-  prefisso corretto per il modello (es. e5 → `query:` / `passage:`) in modo
-  **idempotente**: se il testo è già prefissato lo lascia, altrimenti lo
-  aggiunge (nessun rischio di `query: query: ...`). Per i modelli senza
-  convenzione viene ignorato. Se omesso, nessun prefisso.
-- `normalize_embeddings` (bool, opzionale, default `true`)
+- `text` (string) **or** `texts` (array of strings), required
+- `model` (string, optional), overrides the default model
+- `input_type` (`"query"` | `"passage"`, optional), the **semantic** intent:
+  `query` = searching, `passage` = indexing. The server guarantees the right
+  prefix for the model (e.g. e5 → `query:` / `passage:`) **idempotently**: a text
+  that already carries the prefix is kept, otherwise the prefix is added (no
+  risk of `query: query: ...`). Ignored for models without a convention. When
+  omitted, no prefix.
+- `normalize_embeddings` (bool, optional, default `true`)
 
-Il client resta **agnostico rispetto al modello**: manda sempre la stessa forma
-e lascia al server la conoscenza di come si parla a ciascun modello.
+The client stays **model-agnostic**: it always sends the same shape and leaves
+to the server the knowledge of how to talk to each model.
 
 ```bash
 curl -s http://localhost:8000/embed \
@@ -110,7 +110,7 @@ curl -s http://localhost:8000/embed \
   -d '{"texts": ["ciao mondo", "hello world"], "input_type": "passage"}'
 ```
 
-Risposta:
+Response:
 
 ```json
 {
@@ -123,17 +123,17 @@ Risposta:
 
 ### `POST /score`
 
-Rerank con un cross-encoder: dà un punteggio di pertinenza a ogni coppia
-domanda-documento. Body JSON:
+Reranking with a cross-encoder: scores the relevance of each query-document
+pair. JSON body:
 
-- `pairs` (array di `{"query": string, "text": string}`) — obbligatorio, al
-  massimo `CROSS_ENCODER_MAX_PAIRS`
-- `model` (string, opzionale) — override del modello di default
+- `pairs` (array of `{"query": string, "text": string}`), required, at most
+  `CROSS_ENCODER_MAX_PAIRS`
+- `model` (string, optional), overrides the default model
 
-Il modello deve essere un **cross-encoder** (un modello addestrato per il rerank,
-non un modello di embeddings) e, per contenuti in italiano, multilingue. Il
-server passa la sigmoide in modo esplicito, quindi i punteggi sono sempre in
-`[0, 1]` anche per i checkpoint che di default restituiscono logit.
+The model must be a **cross-encoder** (a model trained for reranking, not an
+embedding model) and, for non-English content, multilingual. The server passes
+the sigmoid explicitly, so scores are always in `[0, 1]`, even for checkpoints
+that return logits by default.
 
 ```bash
 curl -s http://localhost:8000/score \
@@ -141,39 +141,39 @@ curl -s http://localhost:8000/score \
   -d '{"pairs": [{"query": "orari di apertura", "text": "Il museo è aperto dalle 9 alle 18"}]}'
 ```
 
-Risposta:
+Response:
 
 ```json
-{ "model": "<modello>", "scores": [0.93] }
+{ "model": "<model>", "scores": [0.93] }
 ```
 
-Errori: `400` per un body malformato o troppe coppie, `503` se non c'è nessun
-modello (`CROSS_ENCODER_MODEL` vuoto e nessun `model` nella richiesta), `500` se il
-modello non restituisce un punteggio per coppia. Il client Laraplate tratta
-qualunque errore come "rerank non eseguito" e tiene l'ordine originale.
+Errors: `400` for a malformed body or too many pairs, `503` when there is no
+model (`CROSS_ENCODER_MODEL` empty and no `model` in the request), `500` when the
+model does not return one score per pair. The Laraplate client treats any error
+as "rerank not performed" and keeps the original order.
 
-Dal lato Laraplate l'URL di base si imposta con `CROSS_ENCODER_URL` (es.
-`http://HOST:8000`, senza `/score`, che aggiunge il client). Se non è impostato si
-usa `SENTENCE_TRANSFORMERS_URL`: il rerank gira sullo stesso servizio degli
-embeddings. Non c'è un indirizzo predefinito. La chiave è `CROSS_ENCODER_API_KEY`,
-con ripiego su `SENTENCE_TRANSFORMERS_API_KEY`.
+On the Laraplate side, the base URL is set with `CROSS_ENCODER_URL` (e.g.
+`http://HOST:8000`, without `/score`, which the client appends). When it is not
+set, `SENTENCE_TRANSFORMERS_URL` is used: reranking runs on the same service as
+the embeddings. There is no default address. The key is `CROSS_ENCODER_API_KEY`,
+falling back to `SENTENCE_TRANSFORMERS_API_KEY`.
 
-## Test
+## Tests
 
 ```bash
 python -m unittest discover -s tests
 ```
 
-I test sostituiscono `sentence-transformers` e `torch` con finti: non scaricano
-nessun modello e verificano cosa il servizio chiede al modello e cosa risponde.
+The tests replace `sentence-transformers` and `torch` with fakes: they download
+no model and check what the service asks of the model and what it answers.
 
 ## Deploy (systemd)
 
-Il file [`sentence-transformers.service`](sentence-transformers.service) è la
-unit usata in produzione. Presuppone il virtualenv in `/opt/ai-env` e il codice
-in `/opt/sentence-api`. Il rerank è attivo con il modello di default. Per configurarlo aggiungere alla unit
-`Environment=CROSS_ENCODER_MODEL=<modello>` per cambiare il modello di rerank, o
-`Environment=CROSS_ENCODER_MODEL=` per spegnerlo, prima di riavviare.
+The [`sentence-transformers.service`](sentence-transformers.service) file is the
+unit used in production. It assumes the virtualenv in `/opt/ai-env` and the code
+in `/opt/sentence-api`. Reranking is on with the default model. To configure it,
+add `Environment=CROSS_ENCODER_MODEL=<model>` to the unit to change the rerank
+model, or `Environment=CROSS_ENCODER_MODEL=` to turn it off, then restart.
 
 ```bash
 sudo cp sentence-transformers.service /etc/systemd/system/
@@ -181,6 +181,6 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now sentence-transformers.service
 ```
 
-## Licenza
+## License
 
-Rilasciato sotto [Apache License 2.0](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE).
