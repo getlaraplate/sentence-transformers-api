@@ -22,6 +22,10 @@ def env_list(name):
 API_KEYS = env_list("SENTENCE_TRANSFORMERS_API_KEY")
 PUBLIC_PATHS = {"/health"}
 
+# Production readiness of this release, reported by /health and stated in the
+# README: "experimental" until every requirement for production is met.
+READINESS = "experimental"
+
 # Default model, and how many models to keep resident. The Laraplate client
 # sends the active profile's service_model in each request, so this default is
 # only used when a request omits "model".
@@ -286,6 +290,7 @@ def request_too_large(error):
 def health():
     return jsonify({
         "status": "healthy",
+        "readiness": READINESS,
         "model": DEFAULT_MODEL,
         "default_model": DEFAULT_MODEL,
         "loaded_models": list(_models.keys()),

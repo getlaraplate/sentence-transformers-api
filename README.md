@@ -7,6 +7,45 @@ Used by the Laraplate stack: the client sends the active profile's
 request does not specify `model`. A request may only name an allowed model
 (see [Security](#security)).
 
+## Production readiness
+
+**Status: experimental.** Fine for development, tests and evaluation on a
+trusted network. Not ready for production yet: the gaps below are open, and the
+status changes to `production` only when all of them are closed. `GET /health`
+reports the same status in `readiness`.
+
+**Tested on:** unit tests with fake models (no model download), run by hand.
+Earlier releases ran on the Laraplate test container (Debian LXC, 4 GB RAM,
+2 vCPU, CPU only); the hardened release (gunicorn, unprivileged user, keys,
+allow-lists, limits) has not been verified there yet. **GPU:** not tested.
+
+**Known gaps:**
+
+- The documented install shares one virtualenv (`/opt/ai-env`) with
+  `whisper-api`: upgrading one service can break the other.
+- No container image, no tagged release, no changelog.
+- Models load at startup with no separate readiness check: a process still
+  loading looks alive to a load balancer or a healthcheck.
+- No backpressure: when every thread is busy, requests wait without limit.
+- `500` answers include the text of the exception.
+- No metrics and no request id in the logs.
+- No continuous integration: the tests run only by hand.
+- No machine-readable API description and no service version in `/health`.
+- Plain HTTP: TLS needs your own reverse proxy (see [Security](#security)).
+
+**Default models:**
+
+| Model | Use | Licence (model card) |
+| ----- | --- | -------------------- |
+| [`intfloat/multilingual-e5-small`](https://huggingface.co/intfloat/multilingual-e5-small) | `/embed` | MIT |
+| [`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`](https://huggingface.co/cross-encoder/mmarco-mMiniLMv2-L12-H384-v1) | `/score` | Apache-2.0; trained on [mMARCO](https://huggingface.co/datasets/unicamp-dl/mmarco) (Apache-2.0), a translation of [MS MARCO](https://microsoft.github.io/msmarco/) |
+
+The licence of a model is the one on its model card; a model you add to an
+allow-list brings its own. The MS MARCO site states that its datasets "are
+intended for non-commercial research purposes only": check whether that matters
+for your use of the default reranker, or set another one with
+`CROSS_ENCODER_MODEL`.
+
 ## Requirements
 
 - Python 3.11+ (`requirements.txt` pins `numpy==2.3.2`, which requires 3.11)
@@ -100,6 +139,7 @@ Service status and loaded models. Always open, even when a key is set.
 ```json
 {
   "status": "healthy",
+  "readiness": "experimental",
   "model": "intfloat/multilingual-e5-small",
   "default_model": "intfloat/multilingual-e5-small",
   "loaded_models": ["intfloat/multilingual-e5-small"],

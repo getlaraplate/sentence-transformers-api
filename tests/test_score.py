@@ -174,6 +174,11 @@ class ScoreEndpointTest(ServiceTestCase):
 
         self.assertEqual((health["status"], health["model"]), ("healthy", "org/embedder"))
 
+    def test_health_reports_that_the_release_is_not_ready_for_production(self):
+        client = self.service()
+
+        self.assertEqual(client.get("/health").get_json()["readiness"], "experimental")
+
     def test_embed_still_answers(self):
         client = self.service()
 
