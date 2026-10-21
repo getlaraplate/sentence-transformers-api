@@ -1,12 +1,12 @@
 ---
-status: open
+status: closed
 created_on: 2026-10-20
 ---
 # Phase 1 runtime hardening. Implementation Plan
 
 > **For agentic workers:** execute task by task. Steps use checkbox (`- [ ]`) syntax; tick each step when it is done, in the same work block. A step deliberately not done is `- [-]` with its reason on the same line.
 
-**Status:** Open.
+**Status:** Closed (2026-10-21): delivered on `main`, see "Delivery status" at the end.
 
 **Goal:** the service starts answering at once and says when it is ready, refuses work it cannot take instead of queueing it without limit, never leaks an exception, carries a request id, declares its version and HTTP contract, and reports the revision of every model it loaded, with a way to pin one.
 
@@ -97,6 +97,34 @@ created_on: 2026-10-20
 
 **Files:** modify `README.md`, `../specs/2026-10-20-production-readiness-design.md`, this plan.
 
-- [ ] **Docs.** README: `/ready` and the healthcheck to use; `EMBEDDING_MAX_IN_FLIGHT`, the `503` answers and `Retry-After`; `X-Request-Id`; `version`, `api_version` and `openapi.json`; the `@revision` suffix, provisioning the weights ahead of time and `HF_HUB_OFFLINE=1`; the memory figures and `MemoryMax`. Update the Production readiness section: the gaps closed by this plan leave the list; the status stays `experimental` (Phase 2 is open).
-- [ ] **Spec.** Status line points to this plan and records Phase 1 delivered; amend R2 with P1.
-- [ ] **Close.** Delivery status with divergences, ticks, `status: closed`; commit `docs: close the phase 1 plan`.
+- [x] **Docs.** README: `/ready` and the healthcheck to use; `EMBEDDING_MAX_IN_FLIGHT`, the `503` answers and `Retry-After`; `X-Request-Id`; `version`, `api_version` and `openapi.json`; the `@revision` suffix, provisioning the weights ahead of time and `HF_HUB_OFFLINE=1`; the memory figures and `MemoryMax`. Update the Production readiness section: the gaps closed by this plan leave the list; the status stays `experimental` (Phase 2 is open).
+- [x] **Spec.** Status line points to this plan and records Phase 1 delivered; amend R2 with P1.
+- [x] **Close.** Delivery status with divergences, ticks, `status: closed`; commit `docs: close the phase 1 plan`.
+
+## Delivery status (2026-10-21): shipped
+
+All six tasks are built on `main`, commits `1f4f21f` to the closing commit. The service starts answering at
+once and loads the default models in a background thread (`/ready`, `503` with `Retry-After` on `/embed` and
+`/score` while loading, exit code 3 when a default model fails to load); refuses `/embed` and `/score` beyond
+`EMBEDDING_MAX_IN_FLIGHT` with `503 busy`; carries `X-Request-Id` on every answer and in gunicorn's access log;
+answers unexpected errors with a generic `500` and the request id; declares `version` (from `VERSION`,
+`0.1.0`) and `api_version` (`1`) in `/health`, with `openapi.json` checked by the tests; and reports the
+revision of every resident model in `/models`, with `name@revision` to pin one. 73 unit tests pass; a real run
+under gunicorn with the default models confirmed readiness, the in-flight refusals, the request id in the
+access log, the pinned revision offline and the memory figures.
+
+Divergences from the plan text:
+
+- **P4 default (Task 2).** `EMBEDDING_MAX_IN_FLIGHT` defaults to 2, not 6: measured peak 1.9 GB with two
+  requests at a time and 3.1 GB with six, too much for the 4 GB reference container shared with
+  `whisper-api`. `MemoryMax=3G` in the unit; figures in the README, section Memory.
+- **P1 against the spec (Task 1).** As planned, `/ready` does not report a load error: the process exits.
+  R2 of the spec is amended accordingly.
+- **Request id test (Task 3).** The "invalid id" case uses a tab instead of a newline: the test client, like
+  HTTP servers, refuses a newline in a header value. The pattern is checked with `fullmatch`, so a trailing
+  newline could not pass anyway.
+- **Logging.** The service logger gets a stream handler of its own (time, level, name), as gunicorn's error
+  log does not carry application loggers by default.
+
+**Documented in:** `README.md` (Production readiness, Configuration, Model updates, Running: Memory, Startup
+and readiness; Security; API) and `openapi.json`.

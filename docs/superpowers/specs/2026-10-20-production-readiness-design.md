@@ -1,6 +1,6 @@
 # sentence-transformers-api: production readiness
 
-**Status:** Draft, 2026-10-20. Phase 1 plan: `../plans/2026-10-20-phase-1-runtime-hardening.md` (open). Phase 0 delivered on 2026-10-20 (6fdac84).
+**Status:** Draft, 2026-10-20. Phase 0 delivered on 2026-10-20 (6fdac84); Phase 1 delivered on 2026-10-21 by `../plans/2026-10-20-phase-1-runtime-hardening.md`.
 **Builds on:** the hardening of 2026-10-20 (18678e7).
 **Siblings:** the same work for [`whisper-api`](https://github.com/getlaraplate/whisper-api/blob/main/docs/superpowers/specs/2026-10-20-production-readiness-design.md), and the Laraplate client side in [`laraplate`](https://github.com/getlaraplate/laraplate/blob/master/docs/superpowers/specs/2026-10-20-self-hosted-ai-services-client-design.md). The three specs share the decision and requirement numbers (D, R, E), so a number means the same thing in each.
 **History:** split on 2026-10-20 from one spec at the root of the Laraplate workspace, so that each repository owns the design of its own work.
@@ -76,11 +76,12 @@ Rules:
 - `GET /health` answers as soon as the process runs (liveness).
 - `GET /ready` answers `503` until the default embedding model and the default reranker are loaded, then `200`. The container healthcheck and the docs use `/ready`.
 - `/embed` and `/score` answer `503` with `Retry-After` while the service is not ready.
-- A default model that fails to load makes `/ready` report the error and the process exit with a non-zero code, so systemd or the container runtime restarts it.
+- A default model that fails to load makes the process exit with a non-zero code, so systemd or the container runtime restarts it. *Amended 2026-10-21:* `/ready` does not report the error, since a process that is exiting cannot answer; the reason is in the log (exit code 3, gunicorn's boot error).
 
 ### R3. Backpressure and resource limits
 
 - A bounded number of requests in flight (configurable). Beyond it: `503` with `Retry-After`, not an unbounded wait.
+  *Delivered 2026-10-21:* `EMBEDDING_MAX_IN_FLIGHT`, default 2 after measuring the memory (peak 1.9 GB with two requests at a time, 3.1 GB with six).
 - The systemd unit sets `MemoryMax`; the compose file sets a memory limit. The docs give the figures for the default models and for `EMBEDDING_MODEL_CACHE` above 1.
 
 ### R4. Errors
@@ -172,7 +173,7 @@ They do not gate `production`.
 | Phase | Content |
 |---|---|
 | 0 | Readiness section `experimental`, model licences, `readiness` in `/health`. **Delivered 2026-10-20** (6fdac84) |
-| 1 | R2, R3, R4, R7, R10 |
+| 1 | R2, R3, R4, R7, R10. **Delivered 2026-10-21** (`../plans/2026-10-20-phase-1-runtime-hardening.md`) |
 | 2 | R6, R1, R8, R5 |
 | 3 | Status `production` when section 5 is complete |
 | 4 | E1 |

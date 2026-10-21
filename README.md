@@ -16,23 +16,20 @@ reports the same status in `readiness`. The work that closes them, and what
 `production` requires, is in
 [the production readiness spec](docs/superpowers/specs/2026-10-20-production-readiness-design.md).
 
-**Tested on:** unit tests with fake models (no model download), run by hand.
-Earlier releases ran on the Laraplate test container (Debian LXC, 4 GB RAM,
-2 vCPU, CPU only); the hardened release (gunicorn, unprivileged user, keys,
-allow-lists, limits) has not been verified there yet. **GPU:** not tested.
+**Tested on:** unit tests with fake models (no model download), run by hand,
+and the release of 2026-10-21 under gunicorn with the real default models on a
+development machine (x86_64, CPU only), for the memory figures in
+[Memory](#memory) and the revision pinning. Earlier releases ran on the
+Laraplate test container (Debian LXC, 4 GB RAM, 2 vCPU, CPU only); the current
+one has not been verified there yet. **GPU:** not tested.
 
 **Known gaps:**
 
 - The documented install shares one virtualenv (`/opt/ai-env`) with
   `whisper-api`: upgrading one service can break the other.
 - No container image, no tagged release, no changelog.
-- Models load at startup with no separate readiness check: a process still
-  loading looks alive to a load balancer or a healthcheck.
-- No backpressure: when every thread is busy, requests wait without limit.
-- `500` answers include the text of the exception.
-- No metrics and no request id in the logs.
+- No metrics.
 - No continuous integration: the tests run only by hand.
-- No machine-readable API description and no service version in `/health`.
 - Plain HTTP: TLS needs your own reverse proxy (see [Security](#security)).
 
 **Default models:**
@@ -63,17 +60,18 @@ pip install -r requirements.txt
 
 | Variable                 | Default                              | Description                                   |
 | ------------------------ | ------------------------------------ | --------------------------------------------- |
-| `EMBEDDING_MODEL`        | `intfloat/multilingual-e5-small`     | Model loaded at startup and used by default   |
+| `EMBEDDING_MODEL`        | `intfloat/multilingual-e5-small`     | Model loaded at startup and used by default. `name@revision` pins a revision (see [Model updates](#model-updates)) |
 | `EMBEDDING_MODEL_CACHE`  | `2`                                  | How many models to keep resident (LRU)        |
-| `EMBEDDING_ALLOWED_MODELS` | *(empty)*                          | Comma-separated models a request may name, in addition to `EMBEDDING_MODEL`. `*` allows any model (development only) |
+| `EMBEDDING_ALLOWED_MODELS` | *(empty)*                          | Comma-separated models a request may name, in addition to `EMBEDDING_MODEL`. `*` allows any model (development only). An entry may be `name@revision` |
+| `EMBEDDING_MAX_IN_FLIGHT` | `2`                                 | `/embed` and `/score` requests served at once; the next answers `503` `busy` with `Retry-After` (see [Memory](#memory)) |
 | `EMBEDDING_HOST`         | `0.0.0.0`                            | Listening address                             |
 | `EMBEDDING_PORT`         | `8000`                               | Listening port                                |
 | `EMBEDDING_MAX_REQUEST_MB` | `16`                               | Maximum request body, in MB, on every endpoint (`413` beyond) |
 | `EMBEDDING_MAX_TEXTS`    | `256`                                | Maximum texts per `/embed` request (the Laraplate client sends `SENTENCE_TRANSFORMERS_BATCH_SIZE`, default 32) |
 | `EMBEDDING_MAX_TEXT_CHARS` | `100000`                           | Maximum characters per `/embed` text and per `/score` query or text |
 | `SENTENCE_TRANSFORMERS_API_KEY` | *(empty)*                     | Bearer key required on `/embed`, `/score` and `/models`. Several keys may be given, comma-separated. Empty: the service is open (trusted network or development only). Same name as on the Laraplate side |
-| `CROSS_ENCODER_MODEL`    | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Default rerank model for `/score`, loaded at startup. Empty string: reranking off, `/score` answers 503 unless the request names a `model` |
-| `CROSS_ENCODER_ALLOWED_MODELS` | *(empty)*                      | Comma-separated rerank models a request may name, in addition to `CROSS_ENCODER_MODEL`. `*` allows any model (development only) |
+| `CROSS_ENCODER_MODEL`    | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Default rerank model for `/score`, loaded at startup. Empty string: reranking off, `/score` answers 503 unless the request names a `model`. `name@revision` pins a revision |
+| `CROSS_ENCODER_ALLOWED_MODELS` | *(empty)*                      | Comma-separated rerank models a request may name, in addition to `CROSS_ENCODER_MODEL`. `*` allows any model (development only). An entry may be `name@revision` |
 | `CROSS_ENCODER_MODEL_CACHE` | `1`                               | How many rerank models to keep resident (LRU) |
 | `CROSS_ENCODER_MAX_LENGTH`  | `512`                             | Maximum tokens per pair (the rest is truncated) |
 | `CROSS_ENCODER_MAX_PAIRS`   | `64`                              | Maximum pairs per request (the Laraplate client sends at most 64) |
@@ -81,6 +79,27 @@ pip install -r requirements.txt
 Models are downloaded automatically from Hugging Face on first use and are not
 versioned in the repository. Only the default and the allowed models can be
 downloaded (see [Security](#security)).
+
+### Model updates
+
+Models load at their **latest revision** on Hugging Face. The service logs the
+revision each model loads at, and `/models` reports it in `revisions`, so a
+change of behaviour can be traced to a model release.
+
+When a model release breaks compatibility, pin the last good revision with a
+`@revision` suffix on the configured name, e.g.
+`EMBEDDING_MODEL=intfloat/multilingual-e5-small@614241f622f53c4eeff9890bdc4f31cfecc418b3`.
+Requests and answers keep the bare name, which is what the Laraplate client
+sends and checks. To stop depending on Hugging Face at runtime, download the
+weights ahead of time into the cache the service uses (`HF_HOME`) and run it
+with `HF_HUB_OFFLINE=1`:
+
+```bash
+sudo -u sentence-api HF_HOME=/var/cache/sentence-api \
+  /opt/ai-env/bin/hf download intfloat/multilingual-e5-small
+```
+
+Then add `HF_HUB_OFFLINE=1` to `/opt/sentence-api/.env`.
 
 ## Running
 
@@ -102,9 +121,26 @@ Both listen on `EMBEDDING_HOST` (default `0.0.0.0`), on port `EMBEDDING_PORT`
 gunicorn runs **one worker process with 8 threads**: each worker process would
 load its own copy of every model, so concurrency comes from threads instead
 (torch releases the GIL while it computes; the model caches are guarded by a
-lock). Override any setting with `GUNICORN_CMD_ARGS`, e.g.
-`GUNICORN_CMD_ARGS="--threads 8"`; more workers multiply the memory used by the
-models.
+lock). At most `EMBEDDING_MAX_IN_FLIGHT` `/embed` and `/score` requests are
+served at once; the next one answers `503` `{"error": "busy"}` with
+`Retry-After` at once rather than waiting, and the spare threads keep `/health`
+and `/ready` answering. Keep the threads above `EMBEDDING_MAX_IN_FLIGHT`.
+Override any setting with `GUNICORN_CMD_ARGS`, e.g.
+`GUNICORN_CMD_ARGS="--threads 12"`; more workers multiply the memory used by the
+models. Do not turn on `preload_app`: the models load in a thread of the worker.
+
+### Startup and readiness
+
+The server answers as soon as it starts; the default models load in the
+background. `GET /health` is the liveness check, `GET /ready` the readiness
+check: `503` `{"status": "loading"}` until the default models are loaded, then
+`200` `{"status": "ready"}`. Meanwhile `/embed` and `/score` answer `503`
+`{"error": "loading models"}` with `Retry-After`. Point load balancers and
+container healthchecks at `/ready`.
+
+A default model that cannot be downloaded or loaded ends the process with
+gunicorn's boot error (exit code 3) and the reason in the log; systemd restarts
+it after `RestartSec`.
 
 ### Memory
 
@@ -125,9 +161,6 @@ The systemd unit caps the service at `MemoryMax=3G`. Raise it together with
 `EMBEDDING_MAX_IN_FLIGHT`, a larger model or `EMBEDDING_MODEL_CACHE`; on a host
 shared with `whisper-api`, keep the sum of both peaks below the host's memory.
 
-The default model is loaded at startup: if it cannot be downloaded or used, the
-process exits immediately instead of starting and answering 500.
-
 ## Security
 
 - **Authentication.** When `SENTENCE_TRANSFORMERS_API_KEY` is set, `/embed`,
@@ -135,7 +168,7 @@ process exits immediately instead of starting and answering 500.
   Laraplate client sends with `SENTENCE_TRANSFORMERS_API_KEY` (or
   `CROSS_ENCODER_API_KEY` for `/score`). A missing or wrong key answers `401`
   `{"error": "unauthorized"}`. To accept a distinct `CROSS_ENCODER_API_KEY`, list
-  both keys, comma-separated. `/health` stays open for monitoring. Without a key
+  both keys, comma-separated. `/health` and `/ready` stay open for monitoring. Without a key
   the service is open: run it like that only on a trusted network.
 - **Model allow-list.** Loading a model downloads it from Hugging Face, so a
   request may only name the default model or one listed in
@@ -144,7 +177,11 @@ process exits immediately instead of starting and answering 500.
   `service_model` than `EMBEDDING_MODEL`, add it to `EMBEDDING_ALLOWED_MODELS`.
 - **Request limits.** Bodies larger than `EMBEDDING_MAX_REQUEST_MB` answer `413`;
   more than `EMBEDDING_MAX_TEXTS` texts, or a text longer than
-  `EMBEDDING_MAX_TEXT_CHARS`, answer `400`.
+  `EMBEDDING_MAX_TEXT_CHARS`, answer `400`; more than `EMBEDDING_MAX_IN_FLIGHT`
+  requests at once answer `503`.
+- **Errors.** An unexpected error answers `500`
+  `{"error": "internal error", "request_id": "..."}`; the exception is in the
+  service log under that request id, never in the answer.
 - **Process.** The systemd unit runs gunicorn as the unprivileged
   `sentence-api` user (see [Deploy](#deploy-systemd)).
 - **Transport.** The service speaks plain HTTP. Outside a private network, put
@@ -153,14 +190,25 @@ process exits immediately instead of starting and answering 500.
 
 ## API
 
+[`openapi.json`](openapi.json) describes every endpoint, request and answer
+(OpenAPI 3.1); the tests check that the service matches it. `api_version` in
+`/health` is the version of that contract, raised only by a change that breaks
+a client.
+
+Every answer carries an `X-Request-Id` header: the one the client sent, when it
+matches `[A-Za-z0-9._-]{1,128}`, otherwise a new one. The access log prints it,
+so a failed call on the Laraplate side can be found in the service log.
+
 ### `GET /health`
 
-Service status and loaded models. Always open, even when a key is set.
+Liveness, service status and loaded models. Always open, even when a key is set.
 
 ```json
 {
   "status": "healthy",
   "readiness": "experimental",
+  "version": "0.1.0",
+  "api_version": 1,
   "model": "intfloat/multilingual-e5-small",
   "default_model": "intfloat/multilingual-e5-small",
   "loaded_models": ["intfloat/multilingual-e5-small"],
@@ -177,18 +225,25 @@ Service status and loaded models. Always open, even when a key is set.
 
 `reranker.default_model` set to `null` means the host does not rerank.
 
+### `GET /ready`
+
+Readiness, always open: `200` `{"status": "ready"}` once the default models are
+loaded, `503` `{"status": "loading"}` before (see
+[Startup and readiness](#startup-and-readiness)).
+
 ### `GET /models`
 
 Discovery endpoint: the default, the models a request may name
-(`allowed_models`, `null` when any is allowed), the models currently resident,
-the text limits and the families that support `input_type`, so the client knows
-when `input_type` matters.
+(`allowed_models`, `null` when any is allowed), the models currently resident
+and their revisions (`null` when unknown), the text limits and the families
+that support `input_type`, so the client knows when `input_type` matters.
 
 ```json
 {
   "default_model": "intfloat/multilingual-e5-small",
   "allowed_models": ["intfloat/multilingual-e5-small"],
   "loaded_models": ["intfloat/multilingual-e5-small"],
+  "revisions": { "intfloat/multilingual-e5-small": "614241f622f53c4eeff9890bdc4f31cfecc418b3" },
   "model_cache": 2,
   "max_texts": 256,
   "max_text_chars": 100000,
@@ -201,6 +256,7 @@ when `input_type` matters.
     "default_model": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
     "allowed_models": ["cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"],
     "loaded_models": ["cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"],
+    "revisions": { "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1": "1427fd652930e4ba29e8149678df786c240d8825" },
     "model_cache": 1,
     "max_length": 512,
     "max_pairs": 64
@@ -245,8 +301,9 @@ Response:
 ```
 
 Errors: `400` for a malformed body, too many or too long texts, or a model that
-is not allowed, `401` without a valid key, `413` for a body over the limit, `500`
-when the model fails.
+is not allowed, `401` without a valid key, `413` for a body over the limit, `503`
+with `Retry-After` while loading or when busy, `500` (generic, with the request
+id) when the model fails.
 
 ### `POST /score`
 
@@ -279,7 +336,9 @@ Response:
 Errors: `400` for a malformed body, too many or too long pairs, or a model that
 is not allowed, `401` without a valid key, `413` for a body over the limit, `503`
 when there is no model (`CROSS_ENCODER_MODEL` empty and no `model` in the
-request), `500` when the model does not return one score per pair. The Laraplate client treats any error
+request) and, with `Retry-After`, while loading or when busy, `500` (generic,
+with the request id) when the model fails or does not return one score per
+pair. The Laraplate client treats any error
 as "rerank not performed" and keeps the original order.
 
 On the Laraplate side, the base URL is set with `CROSS_ENCODER_URL` (e.g.
@@ -329,6 +388,14 @@ sudo cp /opt/sentence-api/sentence-transformers.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now sentence-transformers.service
 ```
+
+The first start downloads the default models; the service is ready when
+
+```bash
+curl -s http://127.0.0.1:8000/ready      # {"status": "ready"}
+```
+
+answers `200`. The unit caps memory at `MemoryMax=3G` (see [Memory](#memory)).
 
 Set the same key as `SENTENCE_TRANSFORMERS_API_KEY` in the Laraplate `.env`.
 
