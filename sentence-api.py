@@ -1,4 +1,5 @@
 import hmac
+import logging
 import math
 import os
 import threading
@@ -8,6 +9,7 @@ from sentence_transformers import CrossEncoder, SentenceTransformer
 from werkzeug.exceptions import HTTPException
 
 app = Flask(__name__)
+logger = logging.getLogger("sentence_api")
 
 
 def env_list(name):
@@ -18,9 +20,11 @@ def env_list(name):
 # Bearer keys accepted on /embed, /score and /models. Several keys may be given,
 # comma-separated, to rotate a key or to accept a distinct CROSS_ENCODER_API_KEY
 # from the Laraplate client. No key means the service is open (trusted network or
-# local development only). /health always stays open for monitoring.
+# local development only). /health and /ready always stay open for monitoring.
 API_KEYS = env_list("SENTENCE_TRANSFORMERS_API_KEY")
-PUBLIC_PATHS = {"/health"}
+PUBLIC_PATHS = {"/health", "/ready"}
+# Endpoints that need the default models: they answer 503 until those are loaded.
+WORK_PATHS = {"/embed", "/score"}
 
 # Production readiness of this release, reported by /health and stated in the
 # README: "experimental" until every requirement for production is met.
@@ -265,11 +269,36 @@ def score_pairs(model, pairs):
     return scores
 
 
-# Warm the defaults so the first request is not a cold load. A model that cannot
-# be loaded stops the process here instead of answering 500 to every request.
-load_model(DEFAULT_MODEL)
-if RERANK_MODEL:
-    load_reranker(RERANK_MODEL)
+# gunicorn's exit code for a worker that failed to boot: gunicorn stops instead of
+# starting the worker again, and systemd or the container runtime restarts it.
+LOAD_FAILURE_EXIT_CODE = 3
+
+# Set once the default models are loaded.
+ready = threading.Event()
+
+
+def load_default_models():
+    """Warm the defaults so the first request is not a cold load.
+
+    Runs in a background thread so the server answers /health at once and /ready
+    says when the models are there. A default model that cannot be loaded ends
+    the process instead of leaving it to answer 503 forever.
+    """
+    try:
+        load_model(DEFAULT_MODEL)
+        if RERANK_MODEL:
+            load_reranker(RERANK_MODEL)
+    except Exception:  # noqa: BLE001
+        logger.exception("A default model failed to load; stopping the process")
+        os._exit(LOAD_FAILURE_EXIT_CODE)
+        return
+    ready.set()
+
+
+# Started at import, so in each gunicorn worker: the app must not be preloaded in
+# the master (gunicorn.conf.py), whose threads do not survive the fork.
+loader = threading.Thread(target=load_default_models, name="model-loader", daemon=True)
+loader.start()
 
 
 @app.before_request
@@ -279,6 +308,14 @@ def require_api_key():
     if authorized(request.headers.get("Authorization", "")):
         return None
     return jsonify({"error": "unauthorized"}), 401, {"WWW-Authenticate": "Bearer"}
+
+
+@app.before_request
+def require_ready():
+    """Runs after the key check, so an unauthorized request still gets 401."""
+    if request.path in WORK_PATHS and not ready.is_set():
+        return jsonify({"error": "loading models"}), 503, {"Retry-After": "10"}
+    return None
 
 
 @app.errorhandler(413)
@@ -297,6 +334,14 @@ def health():
         "model_cache": MODEL_CACHE,
         "reranker": reranker_info(),
     })
+
+
+@app.route("/ready", methods=["GET"])
+def ready_check():
+    """Readiness: 200 once the default models are loaded, 503 until then."""
+    if ready.is_set():
+        return jsonify({"status": "ready"})
+    return jsonify({"status": "loading"}), 503
 
 
 @app.route("/models", methods=["GET"])

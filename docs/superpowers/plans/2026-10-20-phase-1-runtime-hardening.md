@@ -51,9 +51,9 @@ created_on: 2026-10-20
 
 **Files:** modify `sentence-api.py`, `tests/service_case.py`; create `tests/test_readiness.py`.
 
-- [ ] **Failing tests.** `/health` answers `200` while the default models are still loading (a fake model whose constructor blocks on an event); `/ready` answers `503` `{"status": "loading"}` then `200` `{"status": "ready"}`; `/embed` and `/score` answer `503` with `Retry-After` while loading, `401` without a key when one is set; a default model whose constructor raises makes the loader call the exit function with code 3 (inject the exit function so the test does not end the process).
-- [ ] **Implement.** Move the warm-up from import time into a loader thread started at import; a readiness flag guarded by the cache lock; `/ready`; the gate in `before_request` after auth. `service_case.py` gains a helper that waits for the loader so the existing tests keep their ready service.
-- [ ] **Run** the suite; commit `feat: load models in the background and add /ready`.
+- [x] **Failing tests.** `/health` answers `200` while the default models are still loading (a fake model whose constructor blocks on an event); `/ready` answers `503` `{"status": "loading"}` then `200` `{"status": "ready"}`; `/embed` and `/score` answer `503` with `Retry-After` while loading, `401` without a key when one is set; a default model whose constructor raises makes the loader call the exit function with code 3 (inject the exit function so the test does not end the process).
+- [x] **Implement.** Move the warm-up from import time into a loader thread started at import; a readiness flag guarded by the cache lock; `/ready`; the gate in `before_request` after auth. `service_case.py` gains a helper that waits for the loader so the existing tests keep their ready service.
+- [x] **Run** the suite; commit `feat: load models in the background and add /ready`.
 
 ### Task 2: In-flight limit (R3)
 

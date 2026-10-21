@@ -19,9 +19,17 @@ SERVICE = Path(__file__).resolve().parent.parent / "sentence-api.py"
 
 class FakeSentenceTransformer:
     instances = []
+    # When set, the constructor waits on this event (a model still loading) or raises this exception.
+    block_on = None
+    fail_with = None
 
-    def __init__(self, name):
+    def __init__(self, name, **kwargs):
+        if type(self).block_on is not None:
+            type(self).block_on.wait(5)
+        if type(self).fail_with is not None:
+            raise type(self).fail_with
         self.name = name
+        self.options = kwargs
         type(self).instances.append(self)
 
     def encode(self, texts, normalize_embeddings=True):
@@ -57,6 +65,8 @@ def pair(query="how many people live in Berlin", text="Berlin has about 3.5 mill
 class ServiceTestCase(unittest.TestCase):
     def setUp(self):
         FakeSentenceTransformer.instances = []
+        FakeSentenceTransformer.block_on = None
+        FakeSentenceTransformer.fail_with = None
         FakeCrossEncoder.instances = []
         FakeCrossEncoder.scores = None
 
@@ -71,8 +81,15 @@ class ServiceTestCase(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def service(self, **env):
-        """A fresh copy of the service, so caches and defaults start from the given environment only."""
+    def service(self, wait_until_ready=True, **env):
+        """A fresh copy of the service, so caches and defaults start from the given environment only.
+
+        The default models load in a background thread; unless told otherwise, wait until it is done.
+        """
+        return self.load_service(wait_until_ready, **env).app.test_client()
+
+    def load_service(self, wait_until_ready=True, **env):
+        """The module of a fresh copy of the service, for tests that need its internals."""
         environ = {
             key: value
             for key, value in os.environ.items()
@@ -85,4 +102,7 @@ class ServiceTestCase(unittest.TestCase):
         with mock.patch.dict(os.environ, environ, clear=True):
             spec.loader.exec_module(module)
 
-        return module.app.test_client()
+        if wait_until_ready:
+            module.loader.join(5)
+
+        return module

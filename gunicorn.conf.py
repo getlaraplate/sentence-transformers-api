@@ -17,6 +17,9 @@ bind = f"{os.environ.get('EMBEDDING_HOST', '0.0.0.0')}:{os.environ.get('EMBEDDIN
 workers = 1
 worker_class = "gthread"
 threads = 4
+# The models load in a thread started when the app is imported; a preloaded app
+# would start it in the master, and threads do not survive the fork.
+preload_app = False
 
 # A cold load of a newly allowed model downloads it; give it time.
 timeout = 120
