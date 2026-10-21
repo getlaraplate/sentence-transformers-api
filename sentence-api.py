@@ -28,6 +28,18 @@ def env_list(name):
     return [value.strip() for value in os.environ.get(name, "").split(",") if value.strip()]
 
 
+def split_revision(configured):
+    """Split a configured "name@revision" into (name, revision); revision is None when absent.
+
+    Models load at their latest revision. A revision is pinned only when a model
+    release breaks compatibility; requests and answers always use the bare name.
+    """
+    if not configured:
+        return configured, None
+    name, _, revision = configured.partition("@")
+    return name, revision or None
+
+
 # Bearer keys accepted on /embed, /score and /models. Several keys may be given,
 # comma-separated, to rotate a key or to accept a distinct CROSS_ENCODER_API_KEY
 # from the Laraplate client. No key means the service is open (trusted network or
@@ -49,7 +61,7 @@ API_VERSION = 1
 # Default model, and how many models to keep resident. The Laraplate client
 # sends the active profile's service_model in each request, so this default is
 # only used when a request omits "model".
-DEFAULT_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+DEFAULT_MODEL, _default_revision = split_revision(os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small"))
 MODEL_CACHE = max(1, int(os.environ.get("EMBEDDING_MODEL_CACHE", "2")))
 HOST = os.environ.get("EMBEDDING_HOST", "0.0.0.0")
 PORT = int(os.environ.get("EMBEDDING_PORT", "8000"))
@@ -77,7 +89,7 @@ _in_flight = threading.BoundedSemaphore(MAX_IN_FLIGHT)
 # string turns the default off: the host then does not rerank and answers 503
 # unless the request names a model.
 DEFAULT_RERANK_MODEL = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
-RERANK_MODEL = os.environ.get("CROSS_ENCODER_MODEL", DEFAULT_RERANK_MODEL) or None
+RERANK_MODEL, _rerank_revision = split_revision(os.environ.get("CROSS_ENCODER_MODEL", DEFAULT_RERANK_MODEL) or None)
 RERANK_MODEL_CACHE = max(1, int(os.environ.get("CROSS_ENCODER_MODEL_CACHE", "1")))
 # Pairs are truncated to this many tokens: a long-context reranker would
 # otherwise default to its whole window, which is slow on CPU.
@@ -86,20 +98,26 @@ RERANK_MAX_LENGTH = max(1, int(os.environ.get("CROSS_ENCODER_MAX_LENGTH", "512")
 RERANK_MAX_PAIRS = max(1, int(os.environ.get("CROSS_ENCODER_MAX_PAIRS", "64")))
 
 
-def allowed_models(name, default):
-    """Models a request may name: the default plus the listed ones, or None for any.
+def allowed_models(name, default, default_revision):
+    """Models a request may name and the pinned revisions: (names or None for any, {name: revision}).
 
     Loading a model downloads it from Hugging Face, so a client must not be able
     to name an arbitrary one. "*" in the list turns the check off (development).
     """
-    listed = env_list(name)
-    if "*" in listed:
-        return None
-    return sorted(set(listed) | ({default} if default else set()))
+    pins = {default: default_revision} if default and default_revision else {}
+    names = set()
+    for entry in env_list(name):
+        model, revision = split_revision(entry)
+        names.add(model)
+        if revision:
+            pins[model] = revision
+    if "*" in names:
+        return None, pins
+    return sorted(names | ({default} if default else set())), pins
 
 
-EMBEDDING_ALLOWED_MODELS = allowed_models("EMBEDDING_ALLOWED_MODELS", DEFAULT_MODEL)
-RERANK_ALLOWED_MODELS = allowed_models("CROSS_ENCODER_ALLOWED_MODELS", RERANK_MODEL)
+EMBEDDING_ALLOWED_MODELS, EMBEDDING_PINS = allowed_models("EMBEDDING_ALLOWED_MODELS", DEFAULT_MODEL, _default_revision)
+RERANK_ALLOWED_MODELS, RERANK_PINS = allowed_models("CROSS_ENCODER_ALLOWED_MODELS", RERANK_MODEL, _rerank_revision)
 
 
 def model_allowed(name, allowed):
@@ -126,8 +144,37 @@ MODEL_PREFIXES = {
 
 # name -> SentenceTransformer, ordered oldest..newest (simple LRU by re-insert).
 _models = {}
+# name -> revision commit the model was loaded at, or None when unknown.
+_revisions = {}
 # Guards both model caches: gunicorn serves requests from several threads.
 _models_lock = threading.Lock()
+
+
+def resolved_revision(name, pinned):
+    """The commit of the cached snapshot a model loads from, or None when it cannot be told.
+
+    The Hugging Face cache keeps each revision under snapshots/<commit>/; a local
+    path, or a cache without the file, gives None.
+    """
+    try:
+        from huggingface_hub import try_to_load_from_cache
+
+        path = try_to_load_from_cache(name, "config.json", revision=pinned)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(path, str):
+        return None
+    parts = Path(path).parts
+    return parts[parts.index("snapshots") + 1] if "snapshots" in parts[:-1] else None
+
+
+def record_revision(kind, name, pinned):
+    _revisions[(kind, name)] = resolved_revision(name, pinned)
+    logger.info("Loaded %s model %s at revision %s", kind, name, _revisions[(kind, name)] or "unknown")
+
+
+def resident_revisions(kind, names):
+    return {name: _revisions.get((kind, name)) for name in names}
 
 
 def load_model(name):
@@ -135,7 +182,9 @@ def load_model(name):
     with _models_lock:
         model = _models.pop(name, None)
         if model is None:
-            model = SentenceTransformer(name)
+            revision = EMBEDDING_PINS.get(name)
+            model = SentenceTransformer(name, revision=revision)
+            record_revision("embedding", name, revision)
         _models[name] = model  # mark as most-recently used
         while len(_models) > MODEL_CACHE:
             _models.pop(next(iter(_models)))
@@ -199,7 +248,9 @@ def load_reranker(name):
     with _models_lock:
         model = _rerankers.pop(name, None)
         if model is None:
-            model = CrossEncoder(name, max_length=RERANK_MAX_LENGTH)
+            revision = RERANK_PINS.get(name)
+            model = CrossEncoder(name, max_length=RERANK_MAX_LENGTH, revision=revision)
+            record_revision("rerank", name, revision)
         _rerankers[name] = model  # mark as most-recently used
         while len(_rerankers) > RERANK_MODEL_CACHE:
             _rerankers.pop(next(iter(_rerankers)))
@@ -422,19 +473,24 @@ def models():
     """Discovery endpoint: what the client can ask for and how input_type maps.
 
     It exposes the default, the models a request may name (null when any is
-    allowed), what is currently resident, and the input_type prefix families so
-    the client knows when input_type matters.
+    allowed), what is currently resident and at which revision, and the
+    input_type prefix families so the client knows when input_type matters.
     """
     return jsonify({
         "default_model": DEFAULT_MODEL,
         "allowed_models": EMBEDDING_ALLOWED_MODELS,
         "loaded_models": list(_models.keys()),
+        "revisions": resident_revisions("embedding", _models.keys()),
         "model_cache": MODEL_CACHE,
         "max_texts": MAX_TEXTS,
         "max_text_chars": MAX_TEXT_CHARS,
         "input_types": ["query", "passage"],
         "prefix_families": MODEL_PREFIXES,
-        "reranker": {**reranker_info(), "allowed_models": RERANK_ALLOWED_MODELS},
+        "reranker": {
+            **reranker_info(),
+            "allowed_models": RERANK_ALLOWED_MODELS,
+            "revisions": resident_revisions("rerank", _rerankers.keys()),
+        },
     })
 
 

@@ -86,10 +86,12 @@ created_on: 2026-10-20
 
 **Files:** modify `sentence-api.py`, `tests/service_case.py`; create `tests/test_revisions.py`.
 
-- [ ] **Verify** that `huggingface_hub.try_to_load_from_cache` in the version installed by the pinned sentence-transformers returns a path under `snapshots/<commit>/`, and that `SentenceTransformer` and `CrossEncoder` accept `revision=`. If either differs, record the finding in this plan and adapt P9 or P10.
-- [ ] **Failing tests.** The fakes record the `revision` they are given. `EMBEDDING_MODEL=org/m@abc` loads `org/m` with `revision="abc"`; a request naming `org/m` is served by it and the answer's `model` is `org/m`; a request naming `org/m@abc` is refused (`400`, not allowed). `/models` reports `revisions` from a patched cache lookup, `null` when the lookup finds nothing. The same for `CROSS_ENCODER_MODEL` and the allow-lists.
-- [ ] **Implement** P9 and P10.
-- [ ] **Run** the suite; commit `feat: report model revisions and allow pinning one`.
+- [x] **Verify** that `huggingface_hub.try_to_load_from_cache` in the version installed by the pinned sentence-transformers returns a path under `snapshots/<commit>/`, and that `SentenceTransformer` and `CrossEncoder` accept `revision=`. If either differs, record the finding in this plan and adapt P9 or P10.
+- [x] **Failing tests.** The fakes record the `revision` they are given. `EMBEDDING_MODEL=org/m@abc` loads `org/m` with `revision="abc"`; a request naming `org/m` is served by it and the answer's `model` is `org/m`; a request naming `org/m@abc` is refused (`400`, not allowed). `/models` reports `revisions` from a patched cache lookup, `null` when the lookup finds nothing. The same for `CROSS_ENCODER_MODEL` and the allow-lists.
+- [x] **Implement** P9 and P10.
+- [x] **Run** the suite; commit `feat: report model revisions and allow pinning one`.
+
+> **Verified (2026-10-21):** huggingface_hub 1.33.0 returns `.../snapshots/<commit>/config.json`; sentence-transformers 5.6.0 `SentenceTransformer` and `CrossEncoder` accept `revision`. A real run with `EMBEDDING_MODEL=intfloat/multilingual-e5-small@614241f…` and `HF_HUB_OFFLINE=1` loads the pinned snapshot, answers `model` without the suffix and reports both revisions in `/models`.
 
 ### Task 6: Documentation and closing
 

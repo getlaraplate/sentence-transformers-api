@@ -60,6 +60,7 @@ class FakeCrossEncoder:
     def __init__(self, name, max_length=None, **kwargs):
         self.name = name
         self.max_length = max_length
+        self.options = kwargs
         self.calls = []
         type(self).instances.append(self)
 
