@@ -68,9 +68,9 @@ created_on: 2026-10-20
 
 **Files:** modify `sentence-api.py`, `gunicorn.conf.py`; create `tests/test_errors.py`.
 
-- [ ] **Failing tests.** A valid incoming `X-Request-Id` is echoed; an invalid one (too long, a space, a newline) is replaced by a 32-hex id; every endpoint, including `401`, `413` and `503`, carries the header. A fake encode raising `RuntimeError("secret path /x")` gives `500` `{"error": "internal error", "request_id": ...}` and the answer does not contain `secret`; the log record (captured with `assertLogs`) holds the request id and the exception. `/score` with a model returning two scores per pair: `500`, generic message.
-- [ ] **Implement** P5 and P6: request id in `before_request` (first in the chain), header in `after_request`, a `@app.errorhandler(Exception)` that re-raises `HTTPException` and logs the rest; drop the `try`/`except Exception` blocks of the views. gunicorn `access_log_format` with `%({x-request-id}o)s`.
-- [ ] **Run** the suite; commit `feat: add request ids and stop leaking exceptions`.
+- [x] **Failing tests.** A valid incoming `X-Request-Id` is echoed; an invalid one (too long, a space, a newline) is replaced by a 32-hex id; every endpoint, including `401`, `413` and `503`, carries the header. A fake encode raising `RuntimeError("secret path /x")` gives `500` `{"error": "internal error", "request_id": ...}` and the answer does not contain `secret`; the log record (captured with `assertLogs`) holds the request id and the exception. `/score` with a model returning two scores per pair: `500`, generic message.
+- [x] **Implement** P5 and P6: request id in `before_request` (first in the chain), header in `after_request`, a `@app.errorhandler(Exception)` that re-raises `HTTPException` and logs the rest; drop the `try`/`except Exception` blocks of the views. gunicorn `access_log_format` with `%({x-request-id}o)s`.
+- [x] **Run** the suite; commit `feat: add request ids and stop leaking exceptions`.
 
 ### Task 4: Version and OpenAPI document (R7)
 

@@ -2,7 +2,9 @@ import hmac
 import logging
 import math
 import os
+import re
 import threading
+import uuid
 
 from flask import Flask, g, jsonify, request
 from sentence_transformers import CrossEncoder, SentenceTransformer
@@ -10,6 +12,14 @@ from werkzeug.exceptions import HTTPException
 
 app = Flask(__name__)
 logger = logging.getLogger("sentence_api")
+if not logger.handlers:
+    _log_handler = logging.StreamHandler()
+    _log_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(name)s: %(message)s"))
+    logger.addHandler(_log_handler)
+    logger.setLevel(logging.INFO)
+
+# An incoming X-Request-Id is kept when it looks like an id; otherwise one is made.
+REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
 
 def env_list(name):
@@ -307,6 +317,26 @@ loader = threading.Thread(target=load_default_models, name="model-loader", daemo
 loader.start()
 
 
+def request_id():
+    """The id of the current request, made on first use."""
+    if "request_id" not in g:
+        incoming = request.headers.get("X-Request-Id", "")
+        g.request_id = incoming if REQUEST_ID_PATTERN.fullmatch(incoming) else uuid.uuid4().hex
+    return g.request_id
+
+
+@app.before_request
+def assign_request_id():
+    """Registered first, so every later hook and the logs see the id."""
+    request_id()
+
+
+@app.after_request
+def add_request_id(response):
+    response.headers["X-Request-Id"] = request_id()
+    return response
+
+
 @app.before_request
 def require_api_key():
     if not API_KEYS or request.path in PUBLIC_PATHS:
@@ -345,6 +375,15 @@ def release_in_flight_slot(error):
 @app.errorhandler(413)
 def request_too_large(error):
     return jsonify({"error": f"request body too large (max {MAX_REQUEST_MB} MB)"}), 413
+
+
+@app.errorhandler(Exception)
+def internal_error(error):
+    """A generic answer for anything unexpected; the details go to the log only."""
+    if isinstance(error, HTTPException):
+        return error
+    logger.exception("Unhandled error on %s (request %s)", request.path, request_id())
+    return jsonify({"error": "internal error", "request_id": request_id()}), 500
 
 
 @app.route("/health", methods=["GET"])
@@ -391,82 +430,72 @@ def models():
 
 @app.route("/embed", methods=["POST"])
 def embed():
-    try:
-        data = request.get_json(silent=True) or {}
-        if not isinstance(data, dict):
-            return jsonify({"error": "the body must be a JSON object"}), 400
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "the body must be a JSON object"}), 400
 
-        if "texts" in data:
-            texts = data["texts"]
-        elif "text" in data:
-            texts = [data["text"]]
-        else:
-            return jsonify({"error": "No text or texts provided"}), 400
+    if "texts" in data:
+        texts = data["texts"]
+    elif "text" in data:
+        texts = [data["text"]]
+    else:
+        return jsonify({"error": "No text or texts provided"}), 400
 
-        error = validate_texts(texts)
-        if error:
-            return jsonify({"error": error}), 400
+    error = validate_texts(texts)
+    if error:
+        return jsonify({"error": error}), 400
 
-        input_type = data.get("input_type")
-        if input_type is not None and input_type not in ("query", "passage"):
-            return jsonify({
-                "error": "input_type must be 'query' or 'passage'",
-            }), 400
-
-        requested = data.get("model") or None
-        error = validate_requested_model(requested, EMBEDDING_ALLOWED_MODELS)
-        if error:
-            return jsonify({"error": error}), 400
-
-        name, model = load_model(requested)
-        texts, prefix_applied = apply_prefix(texts, name, input_type)
-        normalize = bool(data.get("normalize_embeddings", True))
-        embeddings = model.encode(texts, normalize_embeddings=normalize)
-
+    input_type = data.get("input_type")
+    if input_type is not None and input_type not in ("query", "passage"):
         return jsonify({
-            "model": name,
-            "input_type": input_type,
-            "prefix_applied": prefix_applied,
-            "embeddings": [embedding.tolist() for embedding in embeddings],
-        })
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        return jsonify({"error": str(exc)}), 500
+            "error": "input_type must be 'query' or 'passage'",
+        }), 400
+
+    requested = data.get("model") or None
+    error = validate_requested_model(requested, EMBEDDING_ALLOWED_MODELS)
+    if error:
+        return jsonify({"error": error}), 400
+
+    name, model = load_model(requested)
+    texts, prefix_applied = apply_prefix(texts, name, input_type)
+    normalize = bool(data.get("normalize_embeddings", True))
+    embeddings = model.encode(texts, normalize_embeddings=normalize)
+
+    return jsonify({
+        "model": name,
+        "input_type": input_type,
+        "prefix_applied": prefix_applied,
+        "embeddings": [embedding.tolist() for embedding in embeddings],
+    })
 
 
 @app.route("/score", methods=["POST"])
 def score():
     """Relevance score in [0, 1] for each {query, text} pair, from a cross-encoder."""
-    try:
-        data = request.get_json(silent=True) or {}
-        if not isinstance(data, dict):
-            return jsonify({"error": "the body must be a JSON object"}), 400
-        pairs = data.get("pairs")
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "the body must be a JSON object"}), 400
+    pairs = data.get("pairs")
 
-        error = validate_pairs(pairs)
-        if error:
-            return jsonify({"error": error}), 400
+    error = validate_pairs(pairs)
+    if error:
+        return jsonify({"error": error}), 400
 
-        requested = data.get("model")
-        error = validate_requested_model(requested, RERANK_ALLOWED_MODELS)
-        if error:
-            return jsonify({"error": error}), 400
+    requested = data.get("model")
+    error = validate_requested_model(requested, RERANK_ALLOWED_MODELS)
+    if error:
+        return jsonify({"error": error}), 400
 
-        name, model = load_reranker(requested)
-        if model is None:
-            return jsonify({
-                "error": 'No cross-encoder model configured: set CROSS_ENCODER_MODEL or send "model"',
-            }), 503
-
+    name, model = load_reranker(requested)
+    if model is None:
         return jsonify({
-            "model": name,
-            "scores": score_pairs(model, pairs) if pairs else [],
-        })
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        return jsonify({"error": str(exc)}), 500
+            "error": 'No cross-encoder model configured: set CROSS_ENCODER_MODEL or send "model"',
+        }), 503
+
+    return jsonify({
+        "model": name,
+        "scores": score_pairs(model, pairs) if pairs else [],
+    })
 
 
 if __name__ == "__main__":

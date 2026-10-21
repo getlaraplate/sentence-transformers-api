@@ -34,4 +34,6 @@ graceful_timeout = 30
 control_socket_disable = True
 
 accesslog = "-"
+# gunicorn's default access line plus the X-Request-Id of the answer.
+access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %({x-request-id}o)s'
 errorlog = "-"
