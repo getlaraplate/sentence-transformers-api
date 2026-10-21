@@ -67,10 +67,10 @@ class InFlightLimitTest(ServiceTestCase):
             with self.subTest(path):
                 self.assertEqual(client.get(path).status_code, 200)
 
-    def test_the_limit_defaults_to_six(self):
+    def test_the_limit_defaults_to_two(self):
         module = self.load_service()
 
-        self.assertEqual(module.MAX_IN_FLIGHT, 6)
+        self.assertEqual(module.MAX_IN_FLIGHT, 2)
 
 
 if __name__ == "__main__":

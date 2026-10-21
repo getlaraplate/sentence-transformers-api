@@ -21,6 +21,11 @@ ExecStart=/opt/ai-env/bin/gunicorn -c /opt/sentence-api/gunicorn.conf.py sentenc
 Restart=always
 RestartSec=10
 NoNewPrivileges=yes
+# Peak about 1.9 GB with the default models and EMBEDDING_MAX_IN_FLIGHT=2
+# (README, "Memory"). Raise it with EMBEDDING_MAX_IN_FLIGHT, a larger model or
+# EMBEDDING_MODEL_CACHE above 1; past the limit the kernel stops the service and
+# systemd restarts it.
+MemoryMax=3G
 # Extra sandboxing; needs mount namespaces, which an unprivileged LXC container
 # may not allow (the unit then fails with status 226/NAMESPACE).
 #PrivateTmp=yes

@@ -14,7 +14,7 @@ bind = f"{os.environ.get('EMBEDDING_HOST', '0.0.0.0')}:{os.environ.get('EMBEDDIN
 # One process: every worker would load its own copy of the models. Concurrency
 # comes from threads; torch releases the GIL while it computes, and the model
 # caches are guarded by a lock. The service serves at most
-# EMBEDDING_MAX_IN_FLIGHT (default 6) /embed and /score requests at once and
+# EMBEDDING_MAX_IN_FLIGHT (default 2) /embed and /score requests at once and
 # refuses the next with 503; the threads above that keep /health and /ready
 # answering. Keep threads above EMBEDDING_MAX_IN_FLIGHT.
 workers = 1

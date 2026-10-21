@@ -58,8 +58,10 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_MB * 1024 * 1024
 
 # /embed and /score requests served at once. One more is refused with 503 at
 # once instead of waiting: below gunicorn's thread count, so /health, /ready and
-# the refusals always find a thread (gunicorn.conf.py).
-MAX_IN_FLIGHT = max(1, int(os.environ.get("EMBEDDING_MAX_IN_FLIGHT", "6")))
+# the refusals always find a thread (gunicorn.conf.py). Each request in flight
+# adds a few hundred MB at its peak, and on a small CPU host more parallel
+# requests only share the same cores, hence a low default.
+MAX_IN_FLIGHT = max(1, int(os.environ.get("EMBEDDING_MAX_IN_FLIGHT", "2")))
 _in_flight = threading.BoundedSemaphore(MAX_IN_FLIGHT)
 
 # Cross-encoder reranking (POST /score). As with /embed, the client may name the

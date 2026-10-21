@@ -106,6 +106,25 @@ lock). Override any setting with `GUNICORN_CMD_ARGS`, e.g.
 `GUNICORN_CMD_ARGS="--threads 8"`; more workers multiply the memory used by the
 models.
 
+### Memory
+
+Resident memory of the gunicorn worker, measured on 2026-10-21 (x86_64 CPU,
+Python 3.14, torch 2.13 CPU build, the pinned requirements), with
+`/embed` batches of 32 texts of about 2,000 characters and `/score` requests of
+64 pairs:
+
+| Situation | Resident | Peak |
+| --------- | -------- | ---- |
+| Default models loaded, idle | 1.1 GB | 1.2 GB |
+| One `/embed` and one `/score`, one after the other | 1.4 GB | 1.6 GB |
+| `EMBEDDING_MAX_IN_FLIGHT=2`, two requests at a time (default) | 1.5 GB | 1.9 GB |
+| `EMBEDDING_MAX_IN_FLIGHT=6`, six requests at a time | 2.1 GB | 3.1 GB |
+| A second model resident (`all-MiniLM-L6-v2`, `EMBEDDING_MODEL_CACHE=2`) | + 0.05 GB | |
+
+The systemd unit caps the service at `MemoryMax=3G`. Raise it together with
+`EMBEDDING_MAX_IN_FLIGHT`, a larger model or `EMBEDDING_MODEL_CACHE`; on a host
+shared with `whisper-api`, keep the sum of both peaks below the host's memory.
+
 The default model is loaded at startup: if it cannot be downloaded or used, the
 process exits immediately instead of starting and answering 500.
 
