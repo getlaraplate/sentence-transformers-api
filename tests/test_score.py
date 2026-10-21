@@ -151,7 +151,8 @@ class ScoreEndpointTest(ServiceTestCase):
             with self.subTest(label):
                 FakeCrossEncoder.scores = answer
 
-                response = client.post("/score", json={"pairs": [pair(), pair()]})
+                with self.assertLogs("sentence_api", "ERROR"):
+                    response = client.post("/score", json={"pairs": [pair(), pair()]})
 
                 self.assertEqual(response.status_code, 500)
                 self.assertIn("error", response.get_json())

@@ -78,9 +78,9 @@ created_on: 2026-10-20
 
 **Files:** create `VERSION`, `openapi.json`, `tests/test_contract.py`; modify `sentence-api.py`.
 
-- [ ] **Failing tests.** `/health` carries `version` equal to the `VERSION` file and `api_version` `1`; the set of (path, method) of `app.url_map` without `static` equals the one of `openapi.json`; for each endpoint, the answers of the test client in the success case and in each documented error case carry the required fields, with the documented JSON types, of their schema.
-- [ ] **Implement** P7 and P8. The document describes `/health`, `/ready`, `/models`, `/embed`, `/score`, the Bearer scheme, the error answers (`400`, `401`, `413`, `500`, `503`) and the `X-Request-Id` header.
-- [ ] **Run** the suite; commit `feat: declare the version and the HTTP contract`.
+- [x] **Failing tests.** `/health` carries `version` equal to the `VERSION` file and `api_version` `1`; the set of (path, method) of `app.url_map` without `static` equals the one of `openapi.json`; for each endpoint, the answers of the test client in the success case and in each documented error case carry the required fields, with the documented JSON types, of their schema.
+- [x] **Implement** P7 and P8. The document describes `/health`, `/ready`, `/models`, `/embed`, `/score`, the Bearer scheme, the error answers (`400`, `401`, `413`, `500`, `503`) and the `X-Request-Id` header.
+- [x] **Run** the suite; commit `feat: declare the version and the HTTP contract`.
 
 ### Task 5: Model revisions and pinning (R10)
 

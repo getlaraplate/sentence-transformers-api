@@ -5,6 +5,7 @@ import os
 import re
 import threading
 import uuid
+from pathlib import Path
 
 from flask import Flask, g, jsonify, request
 from sentence_transformers import CrossEncoder, SentenceTransformer
@@ -39,6 +40,11 @@ WORK_PATHS = {"/embed", "/score"}
 # Production readiness of this release, reported by /health and stated in the
 # README: "experimental" until every requirement for production is met.
 READINESS = "experimental"
+# The release, from the VERSION file next to this one, and the version of the HTTP
+# contract described in openapi.json; a change that breaks a client raises it.
+VERSION_FILE = Path(__file__).with_name("VERSION")
+VERSION = VERSION_FILE.read_text().strip() if VERSION_FILE.is_file() else "unknown"
+API_VERSION = 1
 
 # Default model, and how many models to keep resident. The Laraplate client
 # sends the active profile's service_model in each request, so this default is
@@ -393,6 +399,8 @@ def health():
     return jsonify({
         "status": "healthy",
         "readiness": READINESS,
+        "version": VERSION,
+        "api_version": API_VERSION,
         "model": DEFAULT_MODEL,
         "default_model": DEFAULT_MODEL,
         "loaded_models": list(_models.keys()),

@@ -1,0 +1,817 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "sentence-transformers-api",
+    "version": "0.1.0",
+    "summary": "Embeddings and cross-encoder reranking for Laraplate.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "x-api-version": 1
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Liveness and service state. Always open.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The process runs.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                },
+                "example": {
+                  "status": "healthy",
+                  "readiness": "experimental",
+                  "version": "0.1.0",
+                  "api_version": 1,
+                  "model": "intfloat/multilingual-e5-small",
+                  "default_model": "intfloat/multilingual-e5-small",
+                  "loaded_models": [
+                    "intfloat/multilingual-e5-small"
+                  ],
+                  "model_cache": 2,
+                  "reranker": {
+                    "default_model": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+                    "loaded_models": [
+                      "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+                    ],
+                    "model_cache": 1,
+                    "max_length": 512,
+                    "max_pairs": 64
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "summary": "Readiness: 200 once the default models are loaded. Always open.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Ready.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                },
+                "example": {
+                  "status": "ready"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Still loading the default models.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                },
+                "example": {
+                  "status": "loading"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/models": {
+      "get": {
+        "summary": "What a request may name, what is resident, and the input_type prefix families.",
+        "responses": {
+          "200": {
+            "description": "Discovery.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Models"
+                },
+                "example": {
+                  "default_model": "intfloat/multilingual-e5-small",
+                  "allowed_models": [
+                    "intfloat/multilingual-e5-small"
+                  ],
+                  "loaded_models": [
+                    "intfloat/multilingual-e5-small"
+                  ],
+                  "model_cache": 2,
+                  "max_texts": 256,
+                  "max_text_chars": 100000,
+                  "input_types": [
+                    "query",
+                    "passage"
+                  ],
+                  "prefix_families": {
+                    "e5": {
+                      "query": "query: ",
+                      "passage": "passage: "
+                    }
+                  },
+                  "reranker": {
+                    "default_model": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+                    "loaded_models": [
+                      "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+                    ],
+                    "model_cache": 1,
+                    "max_length": 512,
+                    "max_pairs": 64,
+                    "allowed_models": [
+                      "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong Bearer key (only when the service has one).",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "unauthorized"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/embed": {
+      "post": {
+        "summary": "Embeddings for one text or a list of texts.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedRequest"
+              },
+              "example": {
+                "texts": [
+                  "passage: ciao mondo"
+                ],
+                "truncation": true,
+                "normalize_embeddings": true,
+                "max_length": 512,
+                "model": "intfloat/multilingual-e5-small"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One vector per text, in order.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedResponse"
+                },
+                "example": {
+                  "model": "intfloat/multilingual-e5-small",
+                  "input_type": null,
+                  "prefix_applied": false,
+                  "embeddings": [
+                    [
+                      0.012,
+                      -0.034,
+                      0.051
+                    ]
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body, too many or too long texts, or a model not allowed.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "model \"org/other\" is not allowed on this host"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong Bearer key (only when the service has one).",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "unauthorized"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body larger than EMBEDDING_MAX_REQUEST_MB.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "request body too large (max 16 MB)"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected error. The details are in the service log under the request id.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalError"
+                },
+                "example": {
+                  "error": "internal error",
+                  "request_id": "5f2b9c0e8d4a4f1b9a7e3c6d2b1a0f9e"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Loading the default models, busy (EMBEDDING_MAX_IN_FLIGHT reached), or, on /score, no reranker configured.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "busy"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/score": {
+      "post": {
+        "summary": "Relevance score in [0, 1] for each query-text pair, from a cross-encoder.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoreRequest"
+              },
+              "example": {
+                "pairs": [
+                  {
+                    "query": "orari di apertura",
+                    "text": "Il museo è aperto dalle 9 alle 18"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One score per pair, in order.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScoreResponse"
+                },
+                "example": {
+                  "model": "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+                  "scores": [
+                    0.93
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body, too many or too long pairs, or a model not allowed.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "too many pairs: 65 (max 64)"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong Bearer key (only when the service has one).",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "unauthorized"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body larger than EMBEDDING_MAX_REQUEST_MB.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "request body too large (max 16 MB)"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected error. The details are in the service log under the request id.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalError"
+                },
+                "example": {
+                  "error": "internal error",
+                  "request_id": "5f2b9c0e8d4a4f1b9a7e3c6d2b1a0f9e"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Loading the default models, busy (EMBEDDING_MAX_IN_FLIGHT reached), or, on /score, no reranker configured.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "busy"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "SENTENCE_TRANSFORMERS_API_KEY; not required when the service has no key."
+      }
+    },
+    "headers": {
+      "RequestId": {
+        "description": "The client's X-Request-Id when it matches [A-Za-z0-9._-]{1,128}, otherwise a new 32-hex id.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "RetryAfter": {
+        "description": "Seconds to wait before retrying.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "InternalError": {
+        "type": "object",
+        "required": [
+          "error",
+          "request_id"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "internal error"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        }
+      },
+      "Readiness": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "loading"
+            ]
+          }
+        }
+      },
+      "RerankerInfo": {
+        "type": "object",
+        "required": [
+          "default_model",
+          "loaded_models",
+          "model_cache",
+          "max_length",
+          "max_pairs"
+        ],
+        "properties": {
+          "default_model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "loaded_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model_cache": {
+            "type": "integer"
+          },
+          "max_length": {
+            "type": "integer"
+          },
+          "max_pairs": {
+            "type": "integer"
+          },
+          "allowed_models": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "status",
+          "readiness",
+          "version",
+          "api_version",
+          "model",
+          "default_model",
+          "loaded_models",
+          "model_cache",
+          "reranker"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "healthy"
+          },
+          "readiness": {
+            "type": "string",
+            "enum": [
+              "experimental",
+              "production"
+            ]
+          },
+          "version": {
+            "type": "string"
+          },
+          "api_version": {
+            "type": "integer"
+          },
+          "model": {
+            "type": "string"
+          },
+          "default_model": {
+            "type": "string"
+          },
+          "loaded_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model_cache": {
+            "type": "integer"
+          },
+          "reranker": {
+            "$ref": "#/components/schemas/RerankerInfo"
+          }
+        }
+      },
+      "Models": {
+        "type": "object",
+        "required": [
+          "default_model",
+          "allowed_models",
+          "loaded_models",
+          "model_cache",
+          "max_texts",
+          "max_text_chars",
+          "input_types",
+          "prefix_families",
+          "reranker"
+        ],
+        "properties": {
+          "default_model": {
+            "type": "string"
+          },
+          "allowed_models": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "loaded_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model_cache": {
+            "type": "integer"
+          },
+          "max_texts": {
+            "type": "integer"
+          },
+          "max_text_chars": {
+            "type": "integer"
+          },
+          "input_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prefix_families": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "query",
+                "passage"
+              ],
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "passage": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "reranker": {
+            "$ref": "#/components/schemas/RerankerInfo"
+          }
+        }
+      },
+      "EmbedRequest": {
+        "type": "object",
+        "description": "One of text or texts is required.",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "texts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model": {
+            "type": "string",
+            "description": "Must be allowed on the host; the default when omitted."
+          },
+          "input_type": {
+            "type": "string",
+            "enum": [
+              "query",
+              "passage"
+            ]
+          },
+          "normalize_embeddings": {
+            "type": "boolean",
+            "default": true
+          },
+          "truncation": {
+            "type": "boolean",
+            "description": "Accepted and ignored: the model truncates to its own limit."
+          },
+          "max_length": {
+            "type": "integer",
+            "description": "Accepted and ignored: the model truncates to its own limit."
+          }
+        }
+      },
+      "EmbedResponse": {
+        "type": "object",
+        "required": [
+          "model",
+          "input_type",
+          "prefix_applied",
+          "embeddings"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "input_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prefix_applied": {
+            "type": "boolean"
+          },
+          "embeddings": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "ScoreRequest": {
+        "type": "object",
+        "required": [
+          "pairs"
+        ],
+        "properties": {
+          "pairs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "query",
+                "text"
+              ],
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "model": {
+            "type": "string",
+            "description": "Must be allowed on the host; the default when omitted."
+          }
+        }
+      },
+      "ScoreResponse": {
+        "type": "object",
+        "required": [
+          "model",
+          "scores"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "scores": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    }
+  }
+}

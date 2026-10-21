@@ -47,7 +47,8 @@ class InFlightLimitTest(ServiceTestCase):
         client = self.service(EMBEDDING_MAX_IN_FLIGHT="1")
         FakeSentenceTransformer.encode_fails_with = RuntimeError("model crashed")
 
-        self.assertEqual(client.post("/embed", json={"texts": ["ciao"]}).status_code, 500)
+        with self.assertLogs("sentence_api", "ERROR"):
+            self.assertEqual(client.post("/embed", json={"texts": ["ciao"]}).status_code, 500)
         FakeSentenceTransformer.encode_fails_with = None
 
         self.assertEqual(client.post("/embed", json={"texts": ["ciao"]}).status_code, 200)
