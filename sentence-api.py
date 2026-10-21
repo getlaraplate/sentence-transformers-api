@@ -4,7 +4,7 @@ import math
 import os
 import threading
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from sentence_transformers import CrossEncoder, SentenceTransformer
 from werkzeug.exceptions import HTTPException
 
@@ -45,6 +45,12 @@ MAX_REQUEST_MB = max(1, int(os.environ.get("EMBEDDING_MAX_REQUEST_MB", "16")))
 MAX_TEXTS = max(1, int(os.environ.get("EMBEDDING_MAX_TEXTS", "256")))
 MAX_TEXT_CHARS = max(1, int(os.environ.get("EMBEDDING_MAX_TEXT_CHARS", "100000")))
 app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_MB * 1024 * 1024
+
+# /embed and /score requests served at once. One more is refused with 503 at
+# once instead of waiting: below gunicorn's thread count, so /health, /ready and
+# the refusals always find a thread (gunicorn.conf.py).
+MAX_IN_FLIGHT = max(1, int(os.environ.get("EMBEDDING_MAX_IN_FLIGHT", "6")))
+_in_flight = threading.BoundedSemaphore(MAX_IN_FLIGHT)
 
 # Cross-encoder reranking (POST /score). As with /embed, the client may name the
 # model in the request and this is the default. A cross-encoder is another kind
@@ -316,6 +322,24 @@ def require_ready():
     if request.path in WORK_PATHS and not ready.is_set():
         return jsonify({"error": "loading models"}), 503, {"Retry-After": "10"}
     return None
+
+
+@app.before_request
+def limit_in_flight():
+    """Runs last: a request refused earlier never takes a slot."""
+    if request.path not in WORK_PATHS:
+        return None
+    if not _in_flight.acquire(blocking=False):
+        return jsonify({"error": "busy"}), 503, {"Retry-After": "2"}
+    g.holds_in_flight_slot = True
+    return None
+
+
+@app.teardown_request
+def release_in_flight_slot(error):
+    """Runs on every outcome, including an exception or a client that went away."""
+    if g.pop("holds_in_flight_slot", False):
+        _in_flight.release()
 
 
 @app.errorhandler(413)

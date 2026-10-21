@@ -32,7 +32,19 @@ class FakeSentenceTransformer:
         self.options = kwargs
         type(self).instances.append(self)
 
+    # When set, encode() signals `encoding`, then waits on `encode_release` (a slow request) or raises `encode_fails_with`.
+    encoding = None
+    encode_release = None
+    encode_fails_with = None
+
     def encode(self, texts, normalize_embeddings=True):
+        cls = type(self)
+        if cls.encoding is not None:
+            cls.encoding.set()
+        if cls.encode_release is not None:
+            cls.encode_release.wait(5)
+        if cls.encode_fails_with is not None:
+            raise cls.encode_fails_with
         return numpy.zeros((len(texts), 3))
 
 
@@ -67,6 +79,9 @@ class ServiceTestCase(unittest.TestCase):
         FakeSentenceTransformer.instances = []
         FakeSentenceTransformer.block_on = None
         FakeSentenceTransformer.fail_with = None
+        FakeSentenceTransformer.encoding = None
+        FakeSentenceTransformer.encode_release = None
+        FakeSentenceTransformer.encode_fails_with = None
         FakeCrossEncoder.instances = []
         FakeCrossEncoder.scores = None
 

@@ -59,8 +59,8 @@ created_on: 2026-10-20
 
 **Files:** modify `sentence-api.py`, `gunicorn.conf.py`; create `tests/test_backpressure.py`.
 
-- [ ] **Failing tests.** With `EMBEDDING_MAX_IN_FLIGHT=1` and a fake encode blocked on an event, a second `/embed` from another thread answers `503` `{"error": "busy"}` with `Retry-After`; after the first returns, a new request passes. The slot is released after a `500` (a fake encode that raises). `/health` and `/ready` are not counted.
-- [ ] **Implement** P4: a bounded semaphore acquired without blocking in `before_request` for `/embed` and `/score`, released in `teardown_request`. `gunicorn.conf.py`: `threads = 8`, `worker_connections = 32`.
+- [x] **Failing tests.** With `EMBEDDING_MAX_IN_FLIGHT=1` and a fake encode blocked on an event, a second `/embed` from another thread answers `503` `{"error": "busy"}` with `Retry-After`; after the first returns, a new request passes. The slot is released after a `500` (a fake encode that raises). `/health` and `/ready` are not counted.
+- [x] **Implement** P4: a bounded semaphore acquired without blocking in `before_request` for `/embed` and `/score`, released in `teardown_request`. `gunicorn.conf.py`: `threads = 8`, `worker_connections = 32`.
 - [ ] **Measure memory.** In a scratch virtualenv with the pinned requirements, load the default embedding model and reranker (downloads them) and read the resident memory after one `/embed` and one `/score`; repeat with `EMBEDDING_MODEL_CACHE=2` and a second allowed model. Write the figures in the README and set `MemoryMax` in `sentence-transformers.service` at about 1.5 times the default figure, with a comment on how to raise it.
 - [ ] **Run** the suite; commit `feat: refuse work beyond the in-flight limit`.
 

@@ -99,7 +99,7 @@ gunicorn -c gunicorn.conf.py sentence-api:app
 Both listen on `EMBEDDING_HOST` (default `0.0.0.0`), on port `EMBEDDING_PORT`
 (default `8000`).
 
-gunicorn runs **one worker process with 4 threads**: each worker process would
+gunicorn runs **one worker process with 8 threads**: each worker process would
 load its own copy of every model, so concurrency comes from threads instead
 (torch releases the GIL while it computes; the model caches are guarded by a
 lock). Override any setting with `GUNICORN_CMD_ARGS`, e.g.
