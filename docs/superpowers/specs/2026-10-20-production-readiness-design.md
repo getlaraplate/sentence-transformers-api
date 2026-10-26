@@ -1,6 +1,6 @@
 # sentence-transformers-api: production readiness
 
-**Status:** Draft, 2026-10-20. Phase 0 delivered on 2026-10-20 (6fdac84); Phase 1 delivered on 2026-10-21 by `../plans/2026-10-20-phase-1-runtime-hardening.md`.
+**Status:** Superseded on 2026-10-26. This service is archived and replaced by standard servers (the decision and the sourced comparison are in `getlaraplate/laraplate`, `docs/superpowers/specs/2026-10-22-ai-standard-servers-design.md`); the phases after Phase 1 and every E-item of this spec are cancelled. Draft, 2026-10-20. Phase 0 delivered on 2026-10-20 (6fdac84); Phase 1 delivered on 2026-10-21 by `../plans/2026-10-20-phase-1-runtime-hardening.md`.
 **Builds on:** the hardening of 2026-10-20 (18678e7).
 **Siblings:** the same work for [`whisper-api`](https://github.com/getlaraplate/whisper-api/blob/master/docs/superpowers/specs/2026-10-20-production-readiness-design.md), and the Laraplate client side in [`laraplate`](https://github.com/getlaraplate/laraplate/blob/master/docs/superpowers/specs/2026-10-20-self-hosted-ai-services-client-design.md). The three specs share the decision and requirement numbers (D, R, E), so a number means the same thing in each.
 **History:** split on 2026-10-20 from one spec at the root of the Laraplate workspace, so that each repository owns the design of its own work.
