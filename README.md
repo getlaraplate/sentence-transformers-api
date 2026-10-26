@@ -1,3 +1,5 @@
+> **This repository is archived and no longer maintained.** Laraplate now uses maintained servers: Text Embeddings Inference or Infinity for embeddings and reranking, speaches or any OpenAI-style server for transcription. See the [installation guide](https://github.com/getlaraplate/laraai/blob/master/docs/STANDARD_SERVERS_INSTALLATION.md) of the Laraplate AI module. The code stays available under its Apache-2.0 licence.
+
 # sentence-api
 
 Small HTTP service (Flask, served by gunicorn) that serves embeddings and
